@@ -955,3 +955,30 @@ class TextRes5ROIHeads_VKV(TextRes5ROIHeads):
         # self.attention = LV_selfttention(input_size, cfg=cfg, is_multi=False)
         # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
         pass
+
+@ROI_HEADS_REGISTRY.register()
+class TextRes5ROIHeads_textDomination(TextRes5ROIHeads):
+    def __init__(self, cfg, input_shape):
+        super().__init__(cfg, input_shape)
+
+    def __init_LV_model__(self, input_size, cfg):
+        # return
+        self.attention = LV_attention_textDomination(
+            input_size, cfg=cfg, is_multi=False)
+        if self.student_training:
+            # self.mlp_adapter = MLP(input_size, widening_factor=2)
+            # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
+
+            self.mlp_adapter = torch.nn.Sequential(
+                nn.Linear(input_size, input_size//2, bias=True),
+                nn.ReLU(),
+                nn.Linear(input_size//2, input_size, bias=True),
+                nn.ReLU(),
+            )
+
+            # for p in self.attention.parameters():
+            #     p.requires_grad = False
+
+        # self.attention = LV_selfttention(input_size, cfg=cfg, is_multi=False)
+        # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
+        pass

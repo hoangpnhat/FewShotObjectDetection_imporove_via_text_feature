@@ -1877,21 +1877,27 @@ class LV_attention(nn.Module):
         init_scale = 0.02
         self.attention = SingleHeadSiameseAttention(input_size)
         self.proj_k = nn.Linear(input_size*2, input_size)
+        
         self.proj2 = nn.Linear(self.text_dim, input_size)
         with torch.no_grad():
             _init_parameters(self.attention, init_scale)
             
             
     
-    def forward_language_model3(self, visual_feat, label):
+    def forward_language_model(self, visual_feat, label):
         loss = {}
         output = {}
+        # print("embeding text feature",self.embed.shape)
 
         embed = torch.cat([self.embed, self.w_bg], dim=0)  # add bg
+        # print("embeding text feature add background",embed.shape)
         embed = self.proj2(embed)
+        # print("embeding text feature after project",embed.shape)
+        
         # print('good_vector')
         good_vector = F.one_hot(label, len(
             self.classes)+1).to(torch.float).to(self.device)
+        # print('good_vector',good_vector.shape)
 
         text_feat = torch.einsum(
             'b i, i j ->b j', good_vector, embed)
@@ -1906,21 +1912,23 @@ class LV_attention(nn.Module):
     def forward(self, visual_feat, text, num_preds_per_image=None):
         x = visual_feat
 
-        loss, output = self.forward_language_model3(
+        loss, output = self.forward_language_model(
             visual_feat, text)
         # sim_feat, gim_feat = self.forward_vision_model(
         # visual_feat, text)
         # visual_feat[None, :],
         # sim2stext = self.attention1(visual_feat[None, :], stext_feat)[0]
-
+        
+        
         text_feat = output['text_feat']
-        # print(visual_feat.shape)
-        # print(visual_feat[None, :].shape)
-        # print(stext_feat.shape)
+        print(visual_feat.shape)
+        print(visual_feat[None, :].shape)
+        print(text_feat.shape)
         value_feat = torch.cat([visual_feat[None, :], text_feat], dim=2)
-        # print(f"key before proj {key.shape}")
+        # print(f"value_feat before proj {value_feat.shape}")
         value_feat = self.proj_k(value_feat)
-        # print(f"key after proj {key.shape}")
+        # print(f"value_feat after proj {value_feat.shape}")
+        
 
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
@@ -1930,8 +1938,9 @@ class LV_attention(nn.Module):
 
         # torch.cat([sim2stext], dim=1)
         sim2stext = F.relu(sim2stext)
-        # print('sim2stext.shape', sim2stext.shape)
+        print('sim2stext.shape', sim2stext.shape)
         
+        print(visual_feat.len())
         
         alpha = torch.rand(1).cuda()
         alpha = 0
@@ -2056,3 +2065,158 @@ class LV_attention_VKV(LV_attention):
     #         q=visual_feat, k=stext_feat, v=val)[0]
     #     sim2stext = F.relu(sim2stext)
     #     return sim2stext
+          
+          
+          
+class LV_attention_textDomination(nn.Module):
+    def __init__(self,
+                 input_size,
+                 cfg=None,
+                 is_multi=False,
+                 output_size=0,
+                 dropout=0):
+        super().__init__()
+        self.is_multi = is_multi
+        self.device = 'cuda'
+        self.output_size = output_size if output_size else input_size
+        self.dropout = dropout
+        self.distill_mode = cfg.MODEL.ROI_HEADS.DISTILLATE
+        self.student_training = cfg.MODEL.ROI_HEADS.STUDENT_TRAINING
+        self.teacher_training = cfg.MODEL.ROI_HEADS.TEACHER_TRAINING
+        self.__init_language_model__(cfg)
+        # self.__init_attention_layer__(input_size, num_super_cls)
+        self.__init_attention_layer__(input_size)
+        
+        if self.student_training:
+            # self.mlp_adapter = MLP(input_size, widening_factor=2)
+            # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
+
+            self.mlp_adapter = torch.nn.Sequential(
+                nn.Linear(input_size, input_size, bias=True),
+                nn.ReLU(),
+                nn.Linear(input_size, input_size, bias=True),
+                nn.ReLU(),
+            )
+            self.mlp_adapter2 = torch.nn.Sequential(
+                nn.Linear(input_size, input_size, bias=True),
+                nn.ReLU(),
+                nn.Linear(input_size, input_size, bias=True),
+                nn.ReLU(),
+            )
+    def __init_language_model__(self, cfg, num_clusters=6):
+        self.text_dim = 300
+        self.l_model = GloVe(name='6B', dim=self.text_dim)
+        # self.l_model = GloVe(name='42B', dim=text_dim)
+
+        dataset_name = cfg.DATASETS.TRAIN[0]
+
+        metadata_dict = MetadataCatalog.get(dataset_name)
+        is_novel = True if 'shot' in dataset_name else False
+
+        if is_novel:
+            if 'all' in dataset_name:
+                self.classes = metadata_dict.thing_classes
+            else:
+                self.classes = metadata_dict.novel_classes
+                metadata_dict.novel_dataset_id_to_contiguous_id
+        else:
+            self.classes = metadata_dict.base_classes
+
+        # metadata_dict.novel_classes
+        map_voc = {'aeroplane': 'aeroplane', 'bicycle': 'bicycle', 'boat': 'boat', 'bottle': 'bottle', 'car': 'car', 'cat': 'cat', 'chair': 'chair', 'diningtable': 'dining table', 'dog': 'dog', 'horse': 'horse',
+                   'person': 'person', 'pottedplant': 'potted plant', 'sheep': 'sheep', 'train': 'train', 'tvmonitor': 'tv', 'bird': 'bird', 'bus': 'bus', 'cow': 'cow', 'motorbike': 'motorbike', 'sofa': 'sofa'}
+
+        # print(base_classes)
+        embed = torch.zeros(len(self.classes), self.text_dim).to(self.device)
+
+        for id, name in enumerate(self.classes):
+            text = map_voc[name]
+            for i in text.split(' '):
+                embed[id] = embed[id] + \
+                    self.l_model[i][None, :].to(self.device)
+        self.class_id = torch.arange(len(self.classes)+1)
+        self.embed = embed
+        self.w_bg_init = torch.randn(1, self.text_dim)
+        # self.w_bg_init = torch.zeros(1, text_dim)
+        self.w_bg = torch.nn.parameter.Parameter(
+            self.w_bg_init.clone(), requires_grad=True)
+        return
+    def __init_attention_layer__(self, input_size):
+        init_scale = 0.02
+        self.attention = SingleHeadSiameseAttention(self.text_dim)
+        self.proj_k = nn.Linear(input_size*2, input_size)
+        self.proj2 = nn.Linear(self.text_dim, input_size)
+        self.proj_visual = nn.Linear(input_size,self.text_dim)
+        self.proj_value = nn.Linear(self.text_dim*2, self.text_dim)
+        
+        with torch.no_grad():
+            _init_parameters(self.attention, init_scale)
+            
+            
+    
+    def forward_language_model(self, visual_feat, label):
+        loss = {}
+        output = {}
+
+        embed = torch.cat([self.embed, self.w_bg], dim=0)  # add bg
+        # embed = self.proj2(embed)
+        # print('good_vector')
+        good_vector = F.one_hot(label, len(
+            self.classes)+1).to(torch.float).to(self.device)
+        # print('good_vector')
+        
+
+        text_feat = torch.einsum(
+            'b i, i j ->b j', good_vector, embed)
+
+        # pred_weights = self.predict_w(visual_feat)
+        output.update({
+            # 'pred_weights': pred_weights,
+            'text_feat': text_feat[None, :],
+        })
+        return loss, output
+
+    def forward_visual_model(self,visual_feat):
+        loss = {}
+        output = {}
+        
+        return loss,output
+    
+    def forward(self, visual_feat, text, num_preds_per_image=None):
+        visual_feat = self.proj_visual(visual_feat)
+
+        loss, output = self.forward_language_model(
+            visual_feat, text)
+        # sim_feat, gim_feat = self.forward_vision_model(
+        # visual_feat, text)
+        # visual_feat[None, :],
+        # sim2stext = self.attention1(visual_feat[None, :], stext_feat)[0]
+
+        text_feat = output['text_feat']
+
+        value_feat = torch.cat([visual_feat[None, :], text_feat], dim=2)
+        # print("value_feat before project: ",value_feat.shape)
+        
+        value_feat = self.proj_value(value_feat)
+        # print("value_feat after project: ",value_feat.shape)
+        
+        text_feat = F.relu(text_feat)
+        value_feat = F.relu(value_feat)
+        
+
+        sim2stext = self.attention(
+            q=visual_feat[None, :], k=text_feat, v=value_feat)[0]
+
+        # torch.cat([sim2stext], dim=1)
+        sim2stext = F.relu(sim2stext)
+        sim2stext = self.proj2(sim2stext)
+        
+        
+        alpha = torch.rand(1).cuda()
+        alpha = 0
+        # output['sim2stext'] = (1-alpha)*sim2stext + \
+        #     alpha*self.forward_wo_label(visual_feat)
+
+        output['sim2stext'] = sim2stext
+
+        return loss, output
