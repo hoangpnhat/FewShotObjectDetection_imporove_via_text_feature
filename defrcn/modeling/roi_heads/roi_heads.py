@@ -811,7 +811,8 @@ class TextRes5ROIHeads(Res5ROIHeads):
         loss_att, output_att = self.attention(feature_pooled, gt_classes, num_preds_per_image)
         
         # loss_att, output_att = self.attention(feature_pooled)
-        
+        print(output_att['sim2stext'].shape)
+        print(output_att.len)
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             feature_pooled, output_att['sim2stext'])
         output_att['pred_logits'] = pred_class_logits

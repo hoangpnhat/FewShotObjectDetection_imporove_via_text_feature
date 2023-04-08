@@ -40,12 +40,12 @@ from detectron2.layers import ShapeSpec, cat
 from defrcn.engine import DefaultTrainer, default_argument_parser, default_setup
 
 # print(MetadataCatalog.get("coco14_test_base"))
-dataset = "voc_2007_test"
+# dataset = "voc_2007_test"
 
-dicts = list(DatasetCatalog.get(dataset))
-metadata = MetadataCatalog.get(dataset)
-# print("dicts: ",dicts)
-print("meta: ",metadata)
+# dicts = list(DatasetCatalog.get(dataset))
+# metadata = MetadataCatalog.get(dataset)
+# # print("dicts: ",dicts)
+# print("meta: ",metadata)
 # from defrcn.modeling.roi_heads.modules import *
 
 def extender_net(input_size, output_size=2048, factor = 2):
@@ -59,13 +59,23 @@ def extender_net(input_size, output_size=2048, factor = 2):
     )
     
     return model
-    
+def get_feature_backbone():
+    with open('feature_backbone.pkl', 'rb') as f:
+        feature_backbone = pickle.load(f)
+
+    return feature_backbone   
+def get_image():
+    with open('image.pkl', 'rb') as f:
+        image = pickle.load(f)
+
+    return image   
 def get_proposals():
     with open('proposal.pkl', 'rb') as f:
         proposals = pickle.load(f)
     
     return proposals
- 
+
+
 def get_gt_classes():
     with open('proposal.pkl', 'rb') as f:
         proposals = pickle.load(f)
@@ -105,10 +115,17 @@ def get_feature_pooled():
 
 # feature_pooled = get_feature_pooled()
 # print(feature_pooled.shape)
-
-proposals = get_proposals()
-feature_pooled = get_feature_pooled()
-
+import sys
+image_feature1 =get_feature_backbone()["res4"][0]
+images = get_image()
+torch.set_printoptions(threshold=10_000)
+# import matplotlib.pyplot as plt
+print("feature map",image_feature1.shape)
+# np.savetxt('my_file.txt', image_feature1[0].cpu().detach().numpy())
+for img in images:
+    print(img.shape)
+# plt.imsave("image_feature1.jpg",image_feature1[0].cpu().detach().numpy())
+# print(image1[0].numpy())
 # lv_model = LVModel()
 # lv_model.cuda()
 # lv_vector = lv_model(proposals, feature_pooled)

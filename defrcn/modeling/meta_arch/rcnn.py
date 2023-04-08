@@ -74,6 +74,17 @@ class GeneralizedRCNN(nn.Module):
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
 
+        # for i in images:
+        #     print(i.shape)
+
+        # print("feature map of backbone",features["res4"].shape)
+        # import pickle
+        # with open('feature_backbone.pkl', 'wb') as handle:
+        #     pickle.dump(features, handle)
+        # with open('image.pkl', 'wb') as handle:
+        #     pickle.dump(images, handle)
+        # print(features.len)
+
         features_de_rpn = features
         if self.cfg.MODEL.RPN.ENABLE_DECOUPLE:
             scale = self.cfg.MODEL.RPN.BACKWARD_SCALE
