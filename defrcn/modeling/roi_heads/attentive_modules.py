@@ -1901,7 +1901,7 @@ class LV_attention(nn.Module):
 
         text_feat = torch.einsum(
             'b i, i j ->b j', good_vector, embed)
-
+        # print('text_feat',text_feat.shape)
         # pred_weights = self.predict_w(visual_feat)
         output.update({
             # 'pred_weights': pred_weights,
@@ -1921,26 +1921,25 @@ class LV_attention(nn.Module):
         
         
         text_feat = output['text_feat']
-        print(visual_feat.shape)
-        print(visual_feat[None, :].shape)
-        print(text_feat.shape)
+
         value_feat = torch.cat([visual_feat[None, :], text_feat], dim=2)
         # print(f"value_feat before proj {value_feat.shape}")
         value_feat = self.proj_k(value_feat)
         # print(f"value_feat after proj {value_feat.shape}")
         
+        print("value_feat:",value_feat.shape)
 
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
 
         sim2stext = self.attention(
             q=visual_feat[None, :], k=text_feat, v=value_feat)[0]
+        print("output attention: " ,sim2stext.shape)
+        print(text_feat.len)
 
         # torch.cat([sim2stext], dim=1)
         sim2stext = F.relu(sim2stext)
-        print('sim2stext.shape', sim2stext.shape)
-        
-        print(visual_feat.len())
+
         
         alpha = torch.rand(1).cuda()
         alpha = 0
@@ -2220,3 +2219,58 @@ class LV_attention_textDomination(nn.Module):
         output['sim2stext'] = sim2stext
 
         return loss, output
+
+
+class LV_attention_textDomination_VKV(LV_attention_textDomination):
+    def __init__(self,
+                    input_size,
+                    cfg=None,
+                    is_multi=False,
+                    output_size=0,
+                    dropout=0):
+        super().__init__( input_size,
+                    cfg,
+                    is_multi,
+                    output_size,
+                    dropout)
+    
+    def forward(self, visual_feat, text, num_preds_per_image=None):
+        visual_feat = self.proj_visual(visual_feat)
+
+        loss, output = self.forward_language_model(
+            visual_feat, text)
+        # sim_feat, gim_feat = self.forward_vision_model(
+        # visual_feat, text)
+        # visual_feat[None, :],
+        # sim2stext = self.attention1(visual_feat[None, :], stext_feat)[0]
+
+        text_feat = output['text_feat']
+
+        value_feat = torch.cat([visual_feat[None, :], text_feat], dim=2)
+        # print("value_feat before project: ",value_feat.shape)
+        
+        value_feat = self.proj_value(value_feat)
+        # print("value_feat after project: ",value_feat.shape)
+        
+        text_feat = F.relu(text_feat)
+        value_feat = F.relu(value_feat)
+        
+
+        sim2stext = self.attention(
+            q=value_feat[None, :], k=text_feat, v=value_feat)[0]
+
+        # torch.cat([sim2stext], dim=1)
+        sim2stext = F.relu(sim2stext)
+        sim2stext = self.proj2(sim2stext)
+        
+        
+        alpha = torch.rand(1).cuda()
+        alpha = 0
+        # output['sim2stext'] = (1-alpha)*sim2stext + \
+        #     alpha*self.forward_wo_label(visual_feat)
+
+        output['sim2stext'] = sim2stext
+
+        return loss, output
+
+    
