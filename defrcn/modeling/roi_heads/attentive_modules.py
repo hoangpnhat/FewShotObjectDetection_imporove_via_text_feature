@@ -1044,6 +1044,7 @@ class ScaledDotProductAttention(nn.Module):
         self.softmax = nn.Softmax(dim=2)
 
     def forward(self, q, k, v):
+
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
         log_attn = F.log_softmax(attn, 2)
@@ -1113,7 +1114,6 @@ class SingleHeadSiameseAttention(nn.Module):
         q = self.w_qk(q).view(sz_b, len_q, self.n_head, self.d_model)
         k = self.w_qk(k).view(sz_b, len_k, self.n_head, self.d_model)
         v = v.view(sz_b, len_v, self.n_head, self.d_model)
-
         # tsp = tsp.view(sz_b, len_v, self.n_head, self.d_model)
 
         dummy = self.dummy.reshape(1, 1, 1, self.d_model).expand(
@@ -1132,6 +1132,7 @@ class SingleHeadSiameseAttention(nn.Module):
                                                     self.d_model)  # (n_head * b) x lv x d_model
         # tsp = tsp.permute(2, 0, 1, 3).contiguous(
         # ).view(-1, len_v + 1, self.d_model)  # (n_head * b) x lv x d_model
+      
         use_cosine = False
         if use_cosine:
             def norm(x): return torch.nn.functional.normalize(x, p=2.0, dim=-1)
@@ -1812,29 +1813,29 @@ class LV_attention(nn.Module):
         self.device = 'cuda'
         self.output_size = output_size if output_size else input_size
         self.dropout = dropout
-        self.distill_mode = cfg.MODEL.ROI_HEADS.DISTILLATE
-        self.student_training = cfg.MODEL.ROI_HEADS.STUDENT_TRAINING
-        self.teacher_training = cfg.MODEL.ROI_HEADS.TEACHER_TRAINING
+        # self.distill_mode = cfg.MODEL.ROI_HEADS.DISTILLATE
+        # self.student_training = cfg.MODEL.ROI_HEADS.STUDENT_TRAINING
+        # self.teacher_training = cfg.MODEL.ROI_HEADS.TEACHER_TRAINING
         self.__init_language_model__(cfg)
         # self.__init_attention_layer__(input_size, num_super_cls)
         self.__init_attention_layer__(input_size)
         
-        if self.student_training:
-            # self.mlp_adapter = MLP(input_size, widening_factor=2)
-            # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
+        # if self.student_training:
+        #     # self.mlp_adapter = MLP(input_size, widening_factor=2)
+        #     # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
 
-            self.mlp_adapter = torch.nn.Sequential(
-                nn.Linear(input_size, input_size, bias=True),
-                nn.ReLU(),
-                nn.Linear(input_size, input_size, bias=True),
-                nn.ReLU(),
-            )
-            self.mlp_adapter2 = torch.nn.Sequential(
-                nn.Linear(input_size, input_size, bias=True),
-                nn.ReLU(),
-                nn.Linear(input_size, input_size, bias=True),
-                nn.ReLU(),
-            )
+        #     self.mlp_adapter = torch.nn.Sequential(
+        #         nn.Linear(input_size, input_size, bias=True),
+        #         nn.ReLU(),
+        #         nn.Linear(input_size, input_size, bias=True),
+        #         nn.ReLU(),
+        #     )
+        #     self.mlp_adapter2 = torch.nn.Sequential(
+        #         nn.Linear(input_size, input_size, bias=True),
+        #         nn.ReLU(),
+        #         nn.Linear(input_size, input_size, bias=True),
+        #         nn.ReLU(),
+        #     )
     def __init_language_model__(self, cfg, num_clusters=6):
         self.text_dim = 300
         self.l_model = GloVe(name='6B', dim=self.text_dim)
@@ -1877,7 +1878,6 @@ class LV_attention(nn.Module):
         init_scale = 0.02
         self.attention = SingleHeadSiameseAttention(input_size)
         self.proj_k = nn.Linear(input_size*2, input_size)
-        
         self.proj2 = nn.Linear(self.text_dim, input_size)
         with torch.no_grad():
             _init_parameters(self.attention, init_scale)
@@ -1905,7 +1905,7 @@ class LV_attention(nn.Module):
         # pred_weights = self.predict_w(visual_feat)
         output.update({
             # 'pred_weights': pred_weights,
-            'text_feat': text_feat[None, :],
+            'text_feat': embed[None, :],
         })
         return loss, output
     
@@ -1919,25 +1919,17 @@ class LV_attention(nn.Module):
         # visual_feat[None, :],
         # sim2stext = self.attention1(visual_feat[None, :], stext_feat)[0]
         
-        
         text_feat = output['text_feat']
 
         value_feat = torch.cat([visual_feat[None, :], text_feat], dim=2)
-        # print(f"value_feat before proj {value_feat.shape}")
         value_feat = self.proj_k(value_feat)
-        # print(f"value_feat after proj {value_feat.shape}")
-        
-        print("value_feat:",value_feat.shape)
 
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
 
         sim2stext = self.attention(
             q=visual_feat[None, :], k=text_feat, v=value_feat)[0]
-        print("output attention: " ,sim2stext.shape)
-        print(text_feat.len)
 
-        # torch.cat([sim2stext], dim=1)
         sim2stext = F.relu(sim2stext)
 
         
@@ -1950,35 +1942,6 @@ class LV_attention(nn.Module):
 
         return loss, output
 
-    # def forward(self, visual_feat, text, num_preds_per_image):
-
-    #     return self.forward_origin(visual_feat, text, num_preds_per_image)
-
-    # def forward_wo_lable(self, x):
-    #     visual_feat = x[None, :]
-
-    #     embed = torch.cat([self.embed, self.w_bg], dim=0)  # add bg
-    #     embed = self.proj2(embed)[None, :]
-
-    #     # visual_feat, embed
-    #     # print(x.shape, embed.shape)
-    #     weighted = torch.einsum(
-    #         'b j, i j ->b i', x, embed[0])
-
-    #     stext_feat = torch.einsum(
-    #         'b i, i j ->b j', weighted, embed[0]
-    #     )[None, :]
-
-    #     val = torch.cat([visual_feat, stext_feat], dim=2)
-    #     val = self.proj_k(val)
-
-    #     stext_feat = F.relu(stext_feat)
-    #     val = F.relu(val)
-
-    #     sim2stext = self.attention(
-    #         q=visual_feat, k=stext_feat, v=val)[0]
-    #     sim2stext = F.relu(sim2stext)
-    #     return sim2stext
  
 class LV_attention_VKV(LV_attention):
     def __init__(self,
@@ -1995,7 +1958,7 @@ class LV_attention_VKV(LV_attention):
     def forward(self, visual_feat, text, num_preds_per_image=None):
         x = visual_feat
 
-        loss, output = self.forward_language_model3(
+        loss, output = self.forward_language_model(
             visual_feat, text)
         # sim_feat, gim_feat = self.forward_vision_model(
         # visual_feat, text)
@@ -2010,12 +1973,6 @@ class LV_attention_VKV(LV_attention):
 
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
-
-        # print("text feature size:",text_feat.size())
-        # print("visual feature size:",visual_feat.size())
-        # print("value feature size:",value_feat.size())
-        # print(value_feat.str())
-
 
         sim2stext = self.attention(
             q=value_feat, k=text_feat, v=value_feat)[0]
@@ -2035,37 +1992,6 @@ class LV_attention_VKV(LV_attention):
 
         return loss, output
 
-    # def forward(self, visual_feat, text, num_preds_per_image):
-
-    #     return self.forward_origin(visual_feat, text, num_preds_per_image)
-
-    # def forward_wo_lable(self, x):
-    #     visual_feat = x[None, :]
-
-    #     embed = torch.cat([self.embed, self.w_bg], dim=0)  # add bg
-    #     embed = self.proj2(embed)[None, :]
-
-    #     # visual_feat, embed
-    #     # print(x.shape, embed.shape)
-    #     weighted = torch.einsum(
-    #         'b j, i j ->b i', x, embed[0])
-
-    #     stext_feat = torch.einsum(
-    #         'b i, i j ->b j', weighted, embed[0]
-    #     )[None, :]
-
-    #     val = torch.cat([visual_feat, stext_feat], dim=2)
-    #     val = self.proj_k(val)
-
-    #     stext_feat = F.relu(stext_feat)
-    #     val = F.relu(val)
-
-    #     sim2stext = self.attention(
-    #         q=visual_feat, k=stext_feat, v=val)[0]
-    #     sim2stext = F.relu(sim2stext)
-    #     return sim2stext
-          
-          
           
 class LV_attention_textDomination(nn.Module):
     def __init__(self,
@@ -2174,13 +2100,6 @@ class LV_attention_textDomination(nn.Module):
             'text_feat': text_feat[None, :],
         })
         return loss, output
-
-    def forward_visual_model(self,visual_feat):
-        loss = {}
-        output = {}
-        
-        return loss,output
-    
     def forward(self, visual_feat, text, num_preds_per_image=None):
         visual_feat = self.proj_visual(visual_feat)
 
@@ -2257,7 +2176,7 @@ class LV_attention_textDomination_VKV(LV_attention_textDomination):
         
 
         sim2stext = self.attention(
-            q=value_feat[None, :], k=text_feat, v=value_feat)[0]
+            q=value_feat, k=text_feat, v=value_feat)[0]
 
         # torch.cat([sim2stext], dim=1)
         sim2stext = F.relu(sim2stext)
@@ -2273,4 +2192,4 @@ class LV_attention_textDomination_VKV(LV_attention_textDomination):
 
         return loss, output
 
-    
+
