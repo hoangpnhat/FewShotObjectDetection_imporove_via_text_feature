@@ -11,12 +11,7 @@ export CUDA_VISIBLE_DEVICES=4,5,6,7
 cfg_MODEL="
    MODEL.META_ARCHITECTURE GeneralizedDistillatedRCNN
    MODEL.ROI_HEADS.NAME TextRes5ROIHeads
-   MODEL.ROI_HEADS.TEACHER_TRAINING True
-   MODEL.ROI_HEADS.STUDENT_TRAINING True
-   MODEL.ROI_HEADS.DISTILLATE True
-   MODEL.ROI_HEADS.L2 True
    MODEL.ROI_HEADS.KL_TEMP 5
-   SOLVER.IMS_PER_BATCH 8
 "
 
 python3 main.py --num-gpus ${NUM_GPUS} --config-file configs/voc/defrcn_det_r101_base${SPLIT_ID}.yaml \
