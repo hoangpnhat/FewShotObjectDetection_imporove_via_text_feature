@@ -164,53 +164,6 @@ class SingleHeadSiameseAttention(nn.Module):
         # assert 0
         return output
 
-class CrossModalAttention(nn.Module):
-    def __init__(self, d_model,dropout =0):
-        super(CrossModalAttention, self).__init__()
-        self.d_model = d_model
-        
-        self.query_projection = nn.Linear(d_model, d_model)
-        self.key_projection = nn.Linear(d_model, d_model)
-        self.value_projection = nn.Linear(d_model, d_model)
-        self.final_projection = nn.Linear(d_model, d_model)
-        
-        self.linear1 = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model // 2), nn.ReLU(inplace=True))
-        self.linear2 = nn.Sequential(
-            nn.Linear(self.d_model, self.d_model // 2), nn.ReLU(inplace=True))
-        self.linear3 = nn.Linear(self.d_model * 2, self.d_model)
-        self.ffn = FFN(self.d_model, dropout)
-    def forward(self, x1, x2):
-        batch_size = x1.size(0)
-        
-        # Cross-modal Attention
-        residual = x1
-        
-        Q1 = self.query_projection(x1)   # shape: (batch_size, 2048, d_model)
-        K2 = self.key_projection(x2)     # shape: (batch_size, 16, d_model)
-        V2 = self.value_projection(x2)   # shape: (batch_size, 2048, d_model)
-        
-        # Calculate Attention Scores
-        attention_scores = torch.matmul(Q1, K2.transpose(-1, -2))  # shape: (batch_size, 2048, 16)
-        
-        # Normalize Attention Scores
-        attention_scores = attention_scores / torch.sqrt(torch.tensor(self.d_model).to(x1.device)) # scaled dot-product attention
-        attention_weights = torch.softmax(attention_scores, dim=-1)  # shape: (batch_size, 2048, 16)
-        
-        # Apply Attention Weights
-        cross_modal_output = torch.matmul(attention_weights, V2)  # shape: (batch_size, 2048, d_model)
-        # Final Linear Projection
-        
-        output = self.final_projection(cross_modal_output)   # shape: (batch_size, 2048, d_model)
-        
-        output1 = self.linear1(output * residual)
-        output2 = self.linear2(residual - output)
-        output = self.linear3(
-            torch.cat([output1, output2, residual], dim=2)
-        )
-        output = self.ffn(output)
-        return output
-    
 def _init_parameters(module, init_scale):
     for m in module.modules():
         if isinstance(m, nn.Linear):
@@ -233,6 +186,7 @@ class SematicProposalAttention(nn.Module):
             self.dropout = dropout
             self.__init_language_model__(cfg)
             self.__init_attention_layer__(input_size)
+           
     def __init_language_model__(self,cfg):
         self.addition_model = cfg.MODEL.RPN.ADDITION_MODEL
         self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
@@ -258,14 +212,18 @@ class SematicProposalAttention(nn.Module):
             embed[id] = embed[id] + \
                                     self.class_embed[id].to(self.device)
         self.embed = embed
+
     def __init_attention_layer__(self, input_size):
             init_scale = 0.02
-            self.attention = CrossModalAttention(input_size)
+            self.attention = SingleHeadSiameseAttention(input_size)
+            self.key_projection = nn.Linear(self.semantic_dim, input_size)
+            self.value_projection = nn.Linear(self.semantic_dim, input_size)
             with torch.no_grad():
                 _init_parameters(self.attention, init_scale)
         
     def forward_language_model(self):
         output = {}
+        loss ={}
         # print("embeding text feature",self.embed.shape)
         if not self.fixed_bg:
             text_feat = torch.cat([self.embed, self.bg_feature], dim=0)  # add bg
@@ -273,28 +231,29 @@ class SematicProposalAttention(nn.Module):
             # 'pred_weights': pred_weights,
             'text_feat': text_feat,
         })
-        return output
+        return loss,output
     
     def forward(self, visual_feat):
-        output = self.forward_language_model()
-        # sim_feat, gim_feat = self.forward_vision_model(
-        # visual_feat, text)
-        # visual_feat[None, :],
-        # sim2stext = self.attention1(visual_feat[None, :], stext_feat)[0]
-        
+        loss, output = self.forward_language_model()
+
         text_feat = output['text_feat']
-        print('text_feat',text_feat.shape)
+        value_feat = text_feat.detach().clone().to(self.device)
         
-        sim2stext = self.attention(x1=visual_feat,x2=text_feat)[0]
+        text_feat = self.key_projection(text_feat)
+        value_feat = self.value_projection(value_feat)
+        text_feat = F.relu(text_feat)
+        value_feat = F.relu(value_feat)
+
+        sim2stext = self.attention(
+            q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
 
         sim2stext = F.relu(sim2stext)
-
         # output['sim2stext'] = (1-alpha)*sim2stext + \
         #     alpha*self.forward_wo_label(visual_feat)
 
         output['sim2stext'] = sim2stext
 
-        return output
+        return loss,output
 class LV_attention(nn.Module):
     def __init__(self,
                  input_size,

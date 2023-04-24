@@ -942,8 +942,6 @@ class SematicRes5ROIHeads(TextRes5ROIHeads):
             # for p in self.attention.parameters():
             #     p.requires_grad = False
 
-        # self.attention = LV_selfttention(input_size, cfg=cfg, is_multi=False)
-        # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
         pass
     def forward_teacher(self, feature_pooled, proposals, test_with_gt=True):
 
