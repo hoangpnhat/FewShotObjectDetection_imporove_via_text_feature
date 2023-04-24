@@ -281,16 +281,14 @@ class GeneralizedDistillatedRCNN(GeneralizedTextRCNN):
     def __init__(self, cfg):
         super().__init__(cfg)
         
-        self.vis2sem_proj = nn.Conv2d(
-            self.features_channels,
-            self.semantic_dim, 
-            kernel_size=1, 
-            ).to(self.device)
-        
-        self.adapter = nn.Conv2d(
-            self.features_channels,
-            self.features_channels,
-            kernel_size=1
+        self.adapter = nn.Sequential(
+            nn.Conv2d(
+                self.features_channels,
+                self.features_channels,
+                kernel_size=1,
+                bias=False
+            ),
+            nn.ReLU()
         ).to(self.device)
         
     def forward(self, batched_inputs):
