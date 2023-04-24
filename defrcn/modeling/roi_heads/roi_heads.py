@@ -920,30 +920,109 @@ class TextRes5ROIHeads_textDomination_VKV(TextRes5ROIHeads_textDomination):
         pass
 
 @ROI_HEADS_REGISTRY.register()
-class SematicRes5ROIHeads(TextRes5ROIHeads):
+class SematicRes5ROIHeads(Res5ROIHeads):
     def __init__(self, cfg, input_shape):
         super().__init__(cfg, input_shape)
+        self.__init_LV_model__(self.out_channels, cfg)
+
+
+        self.box_predictor = ROI_HEADS_OUTPUT_REGISTRY.get(self.output_layer)(
+            cfg, self.out_channels, self.num_classes, self.cls_agnostic_bbox_reg,
+            # num_super_classes=super_num_class
+        )
 
     def __init_LV_model__(self, input_size, cfg):
         # return
         self.attention = SematicProposalAttention(
             input_size, cfg=cfg, is_multi=False)
-        if self.training:
-            # self.mlp_adapter = MLP(input_size, widening_factor=2)
-            # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
+        pass
+    def _get_gt_proposals(self, matched_idxs, matched_labels, gt_classes):
+        """
+        Based on the matching between N proposals and M groundtruth,
+        sample the proposals and set their classification labels.
 
-            self.mlp_adapter = torch.nn.Sequential(
-                nn.Linear(input_size, input_size//2, bias=True),
-                nn.ReLU(),
-                nn.Linear(input_size//2, input_size, bias=True),
-                nn.ReLU(),
+        Args:
+            matched_idxs (Tensor): a vector of length N, each is the best-matched
+                gt index in [0, M) for each proposal.
+            matched_labels (Tensor): a vector of length N, the matcher's label
+                (one of cfg.MODEL.ROI_HEADS.IOU_LABELS) for each proposal.
+            gt_classes (Tensor): a vector of length M.
+
+        Returns:
+            Tensor: a vector of indices of sampled proposals. Each is in [0, N).
+            Tensor: a vector of the same length, the classification label for
+                each sampled proposal. Each sample is labeled as either a category in
+                [0, num_classes) or the background (num_classes).
+        """
+        has_gt = gt_classes.numel() > 0
+        # Get the corresponding GT for each proposal
+        if has_gt:
+            gt_classes = gt_classes[matched_idxs]
+            # Label unmatched proposals (0 label from matcher) as background (label=num_classes)
+            gt_classes[matched_labels == 0] = self.num_classes
+            # Label ignore proposals (-1 label)
+            gt_classes[matched_labels == -1] = -1
+        else:
+            gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
+
+        # print('self.batch_size_per_image:', self.batch_size_per_image)
+        # print('self.positive_sample_fraction:', self.positive_sample_fraction)
+        # print('self.num_classes:', self.num_classes)
+        from detectron2.layers import nonzero_tuple
+        positive = nonzero_tuple(
+            (gt_classes != -1) & (gt_classes != self.num_classes))[0]
+
+        negative = nonzero_tuple(gt_classes == self.num_classes)[0]
+
+        # sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
+        #     gt_classes,
+        #     self.batch_size_per_image,
+        #     self.positive_sample_fraction,
+        #     self.num_classes,
+        # )
+
+        sampled_idxs = torch.cat([positive, negative], dim=0)
+        return sampled_idxs, gt_classes[sampled_idxs]
+
+    @torch.no_grad()
+    def label_proposals(self, proposals, targets):
+
+        proposals_with_gt = []
+        for proposals_per_image, targets_per_image in zip(proposals, targets):
+            has_gt = len(targets_per_image) > 0
+            match_quality_matrix = pairwise_iou(
+                targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
+            )
+            matched_idxs, matched_labels = self.proposal_matcher(
+                match_quality_matrix)
+            sampled_idxs, gt_classes = self._get_gt_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes
             )
 
-            # for p in self.attention.parameters():
-            #     p.requires_grad = False
+            # Set target attributes of the sampled proposals:
+            # proposals_per_image = proposals_per_image[sampled_idxs]
+            proposals_per_image.gt_classes = gt_classes
+            if has_gt:
+                sampled_targets = matched_idxs[sampled_idxs]
+                # We index all the attributes of targets that start with "gt_"
+                # and have not been added to proposals yet (="gt_classes").
+                # NOTE: here the indexing waste some compute, because heads
+                # like masks, keypoints, etc, will filter the proposals again,
+                # (by foreground/background, or number of keypoints in the image, etc)
+                # so we essentially index the data twice.
+                for (trg_name, trg_value) in targets_per_image.get_fields().items():
+                    if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
+                        proposals_per_image.set(
+                            trg_name, trg_value[sampled_targets])
+            # If no GT is given in the image, we don't know what a dummy gt value can be.
+            # Therefore the returned proposals won't have any gt_* fields, except for a
+            # gt_classes full of background label.
 
-        pass
-    def forward_teacher(self, feature_pooled, proposals, test_with_gt=True):
+            proposals_with_gt.append(proposals_per_image)
+
+        return proposals_with_gt
+
+    def forward_att(self, feature_pooled):
 
         loss_att, output_att = self.attention(feature_pooled)
         
@@ -955,3 +1034,49 @@ class SematicRes5ROIHeads(TextRes5ROIHeads):
         output_att['pred_logits'] = pred_class_logits
         output_att['pred_bbox'] = pred_proposal_deltas
         return output_att, loss_att
+    def forward(self, images, features, proposals, targets=None):
+        del images
+        test_with_gt = True if (not self.training) and targets else False
+        # print('test_with_gt:', test_with_gt)
+        if self.training:
+            proposals = self.label_and_sample_proposals(proposals, targets)
+            # gt_classes = cat([p.gt_classes for p in proposals], dim=0)
+        elif test_with_gt:  # only use for teacher
+            proposals = self.label_proposals(proposals, targets)
+            # gt_classes = cat([p.gt_classes for p in proposals], dim=0)
+
+        proposal_boxes = [x.proposal_boxes for x in proposals]
+        box_features = self._shared_roi_transform(
+            [features[f] for f in self.in_features], proposal_boxes
+        )
+        feature_pooled = box_features.mean(dim=[2, 3])  # pooled to 1x1
+
+        att_output = {}
+        # if self.teacher_training or (self.student_training and self.training and self.distill_mode):
+        if self.training:
+            att_output, att_loss = self.forward_att(
+                feature_pooled)
+            att_loss = {key+'_t': val for key, val in att_loss.items()}
+
+            outputs = FastRCNNOutputs(
+                self.box2box_transform,
+                att_output['pred_logits'],
+                att_output['pred_bbox'],
+                proposals,
+                self.smooth_l1_beta,
+            )            
+            losses = {}
+            loss = outputs.losses()
+            loss = {key+'_t': val for key, val in loss.items()}
+
+            losses.update(loss)
+            losses.update(att_loss)
+
+            return [], losses
+        else:
+            pred_instances, _ = teacher_outputs.inference(
+                self.test_score_thresh,
+                self.test_nms_thresh,
+                self.test_detections_per_img,
+            )
+            return pred_instances, {}
