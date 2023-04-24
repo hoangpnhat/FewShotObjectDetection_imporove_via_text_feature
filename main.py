@@ -34,6 +34,7 @@ def align_iter_student(cfg):
     print('cfg.TEST.EVAL_PERIOD:', cfg.TEST.EVAL_PERIOD)
 
 def add_new_configs(cfg):
+    cfg.MODEL.RPN.ADDITION_MODEL = "glove"
     cfg.MODEL.RPN.ADDITION = False
     cfg.MODEL.DISTILLATION = CN()
     cfg.MODEL.DISTILLATION.TEACHER_TRAINING = False
