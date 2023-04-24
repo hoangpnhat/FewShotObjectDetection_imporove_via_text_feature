@@ -1,11 +1,14 @@
 import torch
 import logging
 from torch import nn
+import torch.nn.functional as F
+
 from detectron2.structures import ImageList
 from detectron2.utils.logger import log_first_n
 from detectron2.modeling.backbone import build_backbone
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
+
 from .build import META_ARCH_REGISTRY
 from .gdl import decouple_layer, AffineLayer
 from defrcn.modeling.roi_heads import build_roi_heads
@@ -14,8 +17,8 @@ from defrcn.data.builtin_meta import PASCAL_VOC_ALL_CATEGORIES, PASCAL_VOC_BASE_
 from defrcn.data.builtin_meta import _get_coco_fewshot_instances_meta
 from defrcn.modeling.roi_heads.attentive_modules import *
 from defrcn.utils.class_embedding import get_class_embed
-import math 
-__all__ = ["GeneralizedRCNN", "GeneralizedTextRCNN"]
+
+__all__ = ["GeneralizedRCNN", "GeneralizedTextRCNN", "GeneralizedDistillatedRCNN"]
 
 
 @META_ARCH_REGISTRY.register()
@@ -117,7 +120,10 @@ class GeneralizedTextRCNN(GeneralizedRCNN):
         self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
         self.features_channels = self._SHAPE_["res4"].channels
         self.semantic_dim = cfg.ADDITION.SEMANTIC_DIM
-        self.to_rpn_input_proj = nn.Linear(self.features_channels + self.semantic_dim, self.features_channels).to(self.device)
+        self.to_rpn_input_proj = nn.Sequential(
+            nn.Linear(self.features_channels + self.semantic_dim, self.features_channels).to(self.device),
+            nn.ReLU()
+        )
         self.class_names = self._get_class_name(cfg)
         self.class_embed = get_class_embed(self.class_names, model="glove", semantic_dim=self.semantic_dim).to(self.device)
         self.bg_feature_init = torch.randn(1, self.semantic_dim)
@@ -171,7 +177,6 @@ class GeneralizedTextRCNN(GeneralizedRCNN):
         for idx, (gt_boxes_per_img, gt_classes_per_img) in enumerate(zip(gt_boxes, gt_classes)):
             for gt_box, gt_class in zip(gt_boxes_per_img, gt_classes_per_img):
                 x1, y1, x2, y2 = self._expand_bbox(gt_box, max_size, stride, 1.0)
-                # print(x1, y1, x2, y2)
                 features[idx, y1:y2, x1:x2] = semantic_features[gt_class]
         
         features = torch.cat((vis_features, features), dim=-1)
@@ -281,6 +286,7 @@ class GeneralizedDistillatedRCNN(GeneralizedTextRCNN):
             self.semantic_dim, 
             kernel_size=1, 
             ).to(self.device)
+        
         self.adapter = nn.Conv2d(
             self.features_channels,
             self.features_channels,
@@ -294,9 +300,9 @@ class GeneralizedDistillatedRCNN(GeneralizedTextRCNN):
         gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
         kd_loss, proposal_losses, detector_losses, _, _ = self._forward_once_(batched_inputs, gt_instances)
         losses = {}
-        losses.update(kd_loss)
         losses.update(detector_losses)
         losses.update(proposal_losses)
+        losses.update(kd_loss)
         return losses
     
     def inference(self, batched_inputs):
@@ -316,11 +322,17 @@ class GeneralizedDistillatedRCNN(GeneralizedTextRCNN):
         images = self.preprocess_image(batched_inputs)
         features = self.backbone(images.tensor)
         
-        features = {k: self.adapter(features[k]) for k in features}
-        kd_loss = {}
         if self.training:
+            teacher_features = {k: self._add_semantic_features 
+                        (features[k], gt_instances, self.class_embed) for k in features
+                        } # teacher features
+            student_features = {k: self.adapter(features[k]) for k in features} # student features
+            kd_loss = {}
             for k in features:
-                kd_loss = self._distillate(features[k], gt_instances, self.class_embed)
+                kd_loss = self._distillate(student_features[k], teacher_features[k])
+            features = teacher_features
+        else:
+            features = {k: self.adapter(features[k]) for k in features} # student features
             
         features_de_rpn = features
         if self.cfg.MODEL.RPN.ENABLE_DECOUPLE:
@@ -337,25 +349,8 @@ class GeneralizedDistillatedRCNN(GeneralizedTextRCNN):
 
         return kd_loss, proposal_losses, detector_losses, results, images.image_sizes
     
-    def _distillate(self, vis_features, gt_instances, class_embed, stride=16):        
-        gt_boxes = [x.gt_boxes for x in gt_instances]
-        gt_classes = [x.gt_classes for x in gt_instances]
-        max_size = vis_features.shape[-2:]
-        semantic_features = torch.zeros(
-            (len(gt_instances), max_size[0], max_size[1], self.semantic_dim), 
-            device=self.device
-            )
-        
-        semantic_features[:,:,:] = self.bg_feature
-        for idx, (gt_boxes_per_img, gt_classes_per_img) in enumerate(zip(gt_boxes, gt_classes)):
-            for gt_box, gt_class in zip(gt_boxes_per_img, gt_classes_per_img):
-                x1, y1, x2, y2 = self._expand_bbox(gt_box, max_size, stride, 1.0)
-                semantic_features[idx, y1:y2, x1:x2] = class_embed[gt_class]
-
-        
-        vis_features = self.vis2sem_proj(vis_features)
-        vis_features = vis_features.permute(0, 2, 3, 1)  # (B, channels, H, W) -> (B, H, W, channels)
-        kd_loss = F.mse_loss(vis_features, semantic_features)
-        return {"kd_loss": kd_loss}
+    def _distillate(self, features, student_features):        
+        kd_loss = F.mse_loss(features, student_features)
+        return {"loss_rpn_kd": kd_loss}
             
 

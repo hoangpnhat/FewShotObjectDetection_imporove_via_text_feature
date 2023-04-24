@@ -817,74 +817,12 @@ class TextRes5ROIHeads(Res5ROIHeads):
         # return
         self.attention = LV_attention(
             input_size, cfg=cfg, is_multi=False)
-        if self.student_training:
-            # self.mlp_adapter = MLP(input_size, widening_factor=2)
-            # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
-
-            self.mlp_adapter = torch.nn.Sequential(
-                nn.Linear(input_size, input_size//2, bias=True),
-                nn.ReLU(),
-                nn.Linear(input_size//2, input_size, bias=True),
-                nn.ReLU(),
-            )
-
-            # for p in self.attention.parameters():
-            #     p.requires_grad = False
-
-        # self.attention = LV_selfttention(input_size, cfg=cfg, is_multi=False)
-        # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
-        pass
-
-    def forward_with_text_attention(self, fg_features, num_preds_per_image=None, gt_classes=None):
-        # with torch.no_grad():
-        #     roi_gt, roi_cls = self.get_roi_with_gt2(
-        #         [features[f] for f in self.in_features], targets)
-        # ot_feat_input = torch.cat(roi_gt, dim=0).unsqueeze(0)
-        # ot_cls_input = torch.cat(roi_cls, dim=0).unsqueeze(0)
-
-        feat = self.attention(
-            fg_features, gt_classes, num_preds_per_image)
-        # att = torch.cat(sim2stext, gim2gtext)
-        # att = self.pro_att(att).softmax(dim=-1)
-        # fg_features = self.atten_bb(fg_features, None)[0]
-        # print('fg_features: ', fg_features.shape)
-        # assert 0
-        # att_ft = sim2stext+gim2gtext
-        return feat
-
-    def forward_adapter(self, fg_features, teacher_features=None):
-
-        # feat = self.attention.forward_wo_label(fg_features)
-        feat = self.mlp_adapter(fg_features)
-        loss = {}
-        alpha = 1.0
-        margin = 0.2
-        def norm_x(x): return F.normalize(x)
-
-        def loss_cosine(a, b):
-            return 1 - torch.einsum(
-                'b i, b i -> b', norm_x(a), norm_x(b))
-
-        if self.training and self.distill_mode and self.student_l2_loss:
-            # l = ((feat - teacher_features)**2).mean()*0
-
-            # l = loss_cosine(feat, teacher_features).mean()*alpha
-            # l = (l - margin).clamp(min=0.2)
-            # l[torch.where(l < margin)] = 0
-            # l = l.mean()*alpha
-            # print('feat', feat)
-            # print('teacher_features', teacher_features)
-
-            if self.student_l2_loss_cosine:
-                l = F.cosine_embedding_loss(feat, teacher_features, Variable(
-                    torch.Tensor(feat.size(0)).cuda().fill_(1.0)))
-            else:
-                l = F.mse_loss(feat, teacher_features)*alpha
-
-            # l = l/feat.shape[0]  # mean according batch size
-            loss = {'loss_student_feat': l}
-
-        return feat, loss
+        self.mlp_adapter = torch.nn.Sequential(
+            nn.Linear(input_size, input_size//2, bias=True),
+            nn.ReLU(),
+            nn.Linear(input_size//2, input_size, bias=True),
+            nn.ReLU(),
+        )
 
     def _get_gt_proposals(self, matched_idxs, matched_labels, gt_classes):
         """
@@ -972,19 +910,14 @@ class TextRes5ROIHeads(Res5ROIHeads):
 
         return proposals_with_gt
 
-    def forward_teacher(self, feature_pooled, proposals, test_with_gt=True):
+    def forward_teacher(self, feature_pooled, proposals):
 
         gt_classes = cat([p.gt_classes for p in proposals], dim=0)
 
         num_preds_per_image = [len(p) for p in proposals]
-        # loss_att, output_att = self.forward_with_text_attention(
-        #     feature_pooled, gt_classes=gt_classes, num_preds_per_image=num_preds_per_image)
 
         loss_att, output_att = self.attention(feature_pooled, gt_classes, num_preds_per_image)
         
-        # loss_att, output_att = self.attention(feature_pooled)
-        # print(output_att['sim2stext'].shape)
-        # print(output_att.len)
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             feature_pooled, output_att['sim2stext'])
         output_att['pred_logits'] = pred_class_logits
@@ -994,20 +927,20 @@ class TextRes5ROIHeads(Res5ROIHeads):
     def forward_student(self, feature_pooled, proposals, teacher_output=None):
         if teacher_output is not None:
             teacher_features = teacher_output.get('sim2stext')
-        else:
-            teacher_features = None
-
-        att_feature, loss = self.forward_adapter(
-            feature_pooled, teacher_features=teacher_features)
-
+        
+        adapted_features = self.mlp_adapter(feature_pooled)
+        losses = {}
+        if self.training:
+            loss = F.mse_loss(adapted_features, teacher_features)
+            losses.update({"loss_l2": loss})
+            
         pred_class_logits, pred_proposal_deltas = self.stu_box_predictor(
-            feature_pooled, att_feature)
+            feature_pooled,
+            adapted_features
+        )
 
-        if self.student_training and self.training and self.distill_mode and self.student_kl_loss:
+        if self.training:
             t_logits = teacher_output['pred_logits']
-            # if self.novel_tuning:
-            #     t_logits, _ = self.stu_box_predictor(
-            #         feature_pooled, teacher_features)
 
             params = {
                 'alpha': 1,
@@ -1021,13 +954,13 @@ class TextRes5ROIHeads(Res5ROIHeads):
                                       bg_label=self.num_classes,
                                       teacher_outputs=t_logits,
                                       params=params)
-            loss.update({'loss_kl': loss_kl})
+            losses.update({'loss_kl': loss_kl})
 
         output = {
             'pred_logits': pred_class_logits,
             'pred_bbox': pred_proposal_deltas
         }
-        return output, loss
+        return output, losses
 
     def forward(self, images, features, proposals, targets=None):
         del images
@@ -1037,7 +970,8 @@ class TextRes5ROIHeads(Res5ROIHeads):
             proposals = self.label_and_sample_proposals(proposals, targets)
             # gt_classes = cat([p.gt_classes for p in proposals], dim=0)
         elif test_with_gt:  # only use for teacher
-            proposals = self.label_proposals(proposals, targets)
+            pass
+            # proposals = self.label_proposals(proposals, targets)
             # gt_classes = cat([p.gt_classes for p in proposals], dim=0)
 
         proposal_boxes = [x.proposal_boxes for x in proposals]
@@ -1046,13 +980,12 @@ class TextRes5ROIHeads(Res5ROIHeads):
         )
         feature_pooled = box_features.mean(dim=[2, 3])  # pooled to 1x1
 
-        t_output = {}
-        if self.teacher_training or (self.student_training and self.training and self.distill_mode):
+        # if self.teacher_training or (self.student_training and self.training and self.distill_mode):
+        if self.training:
             t_output, t_loss = self.forward_teacher(
-                feature_pooled, proposals, test_with_gt)
+                feature_pooled, proposals)
             t_loss = {key+'_t': val for key, val in t_loss.items()}
 
-            # t_loss = {key+'_t' : val for key, val in t_loss.items()}
             teacher_outputs = FastRCNNOutputs(
                 self.box2box_transform,
                 t_output['pred_logits'],
@@ -1060,8 +993,8 @@ class TextRes5ROIHeads(Res5ROIHeads):
                 proposals,
                 self.smooth_l1_beta,
             )
-
-        if self.student_training:
+            
+            
             s_output, s_loss = self.forward_student(
                 feature_pooled, proposals, t_output)
 
@@ -1072,33 +1005,26 @@ class TextRes5ROIHeads(Res5ROIHeads):
                 proposals,
                 self.smooth_l1_beta,
             )
-
-        if self.training:
+            
+            
             losses = {}
-            if self.teacher_training:
-                loss = teacher_outputs.losses()
-                loss = {key+'_t': val for key, val in loss.items()}
+            teacher_loss = teacher_outputs.losses()
+            teacher_loss = {key+'_t': val for key, val in teacher_loss.items()}
 
-                losses.update(loss)
-                losses.update(t_loss)
-            if self.student_training:
-                losses.update(student_outputs.losses())
-                losses.update(s_loss)
+            losses.update(teacher_loss)
+            losses.update(t_loss)
+
+            losses.update(student_outputs.losses())
+            losses.update(s_loss)
 
             return [], losses
         else:
-            if self.teacher_training:
-                pred_instances, _ = teacher_outputs.inference(
-                    self.test_score_thresh,
-                    self.test_nms_thresh,
-                    self.test_detections_per_img,
-                )
-            if self.student_training:
-                pred_instances, _ = student_outputs.inference(
-                    self.test_score_thresh,
-                    self.test_nms_thresh,
-                    self.test_detections_per_img,
-                )
+            s_output, s_loss = self.forward_student(feature_pooled, proposals, None)
+            pred_instances, _ = student_outputs.inference(
+                self.test_score_thresh,
+                self.test_nms_thresh,
+                self.test_detections_per_img,
+            )
             return pred_instances, {}
 
 

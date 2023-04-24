@@ -1873,7 +1873,7 @@ class LV_attention(nn.Module):
         # self.w_bg_init = torch.zeros(1, text_dim)
         self.w_bg = torch.nn.parameter.Parameter(
             self.w_bg_init.clone(), requires_grad=True)
-        return
+        
     def __init_attention_layer__(self, input_size):
         init_scale = 0.02
         self.attention = SingleHeadSiameseAttention(input_size)
@@ -1882,7 +1882,6 @@ class LV_attention(nn.Module):
         with torch.no_grad():
             _init_parameters(self.attention, init_scale)
             
-            
     
     def forward_language_model(self, visual_feat, label):
         loss = {}
@@ -1890,28 +1889,19 @@ class LV_attention(nn.Module):
         # print("embeding text feature",self.embed.shape)
 
         embed = torch.cat([self.embed, self.w_bg], dim=0)  # add bg
-        # print("embeding text feature add background",embed.shape)
         embed = self.proj2(embed)
-        # print("embeding text feature after project",embed.shape)
         
         # print('good_vector')
         good_vector = F.one_hot(label, len(
             self.classes)+1).to(torch.float).to(self.device)
-        # print('good_vector',good_vector.shape)
-
         text_feat = torch.einsum(
             'b i, i j ->b j', good_vector, embed)
-        # print('text_feat',text_feat.shape)
-        # pred_weights = self.predict_w(visual_feat)
         output.update({
-            # 'pred_weights': pred_weights,
-            'text_feat': embed[None, :],
+            'text_feat': text_feat[None, :],
         })
         return loss, output
     
     def forward(self, visual_feat, text, num_preds_per_image=None):
-        x = visual_feat
-
         loss, output = self.forward_language_model(
             visual_feat, text)
         # sim_feat, gim_feat = self.forward_vision_model(
