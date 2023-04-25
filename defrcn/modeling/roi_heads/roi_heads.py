@@ -1074,7 +1074,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
 
             return [], losses
         else:
-            pred_instances, _ = teacher_outputs.inference(
+            pred_instances, _ = outputs.inference(
                 self.test_score_thresh,
                 self.test_nms_thresh,
                 self.test_detections_per_img,
