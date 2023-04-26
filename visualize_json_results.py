@@ -49,8 +49,8 @@ if __name__ == "__main__":
     parser.add_argument("--conf-threshold", default=0.5, type=float, help="confidence threshold")
     args = parser.parse_args()
 
-    input_path = "/home/hoangpn/Ecai/DeFRCN/checkpoints/voc/singleHeadAtt_Text/teacher_base/defrcn_det_r101_base1/inference/coco_instances_results.json"
-    output_path = "/home/hoangpn/Ecai/DeFRCN/checkpoints/voc/singleHeadAtt_Text/teacher_base/defrcn_det_r101_base1/inference/visualize_result"
+    input_path = "checkpoints/voc/textDomination/teacher_base/defrcn_det_r101_base1/inference/coco_instances_results.json"
+    output_path = "checkpoints/voc/textDomination/teacher_base/defrcn_det_r101_base1/inference/visualize_result"
     dataset = "voc_2007_test_base1"
     args.input = input_path
     args.output = output_path

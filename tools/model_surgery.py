@@ -2,6 +2,19 @@ import os
 import torch
 import argparse
 
+def reset_optimizer(args):
+    save_name = args.tar_name + '_optimizer.pth'
+    save_path = os.path.join(args.save_dir, save_name)
+    ckpt = torch.load(args.src_path)
+    if 'scheduler' in ckpt:
+        del ckpt['scheduler']
+    if 'optimizer' in ckpt:
+        del ckpt['optimizer']
+    if 'iteration' in ckpt:
+        ckpt['iteration'] = 0
+    torch.save(ckpt, save_path)
+    print('save changed ckpt to {}'.format(save_path))
+
 
 def surgery_loop(args, surgery):
 
@@ -39,6 +52,9 @@ def main(args):
     Either remove the final layer weights for fine-tuning on novel dataset or
     append randomly initialized weights for the novel classes.
     """
+    if args.method == "reset":
+        return reset_optimizer(args)
+        
     def surgery(param_name, is_weight, tar_size, ckpt):
         weight_name = param_name + ('.weight' if is_weight else '.bias')
         pretrained_weight = ckpt['model'][weight_name]
@@ -74,7 +90,7 @@ if __name__ == '__main__':
     parser.add_argument('--dataset', type=str, default='coco', choices=['voc', 'coco'])
     parser.add_argument('--src-path', type=str, default='', help='Path to the main checkpoint')
     parser.add_argument('--save-dir', type=str, default='', required=True, help='Save directory')
-    parser.add_argument('--method', choices=['remove', 'randinit'], required=True,
+    parser.add_argument('--method', choices=['remove', 'randinit', 'reset'], required=True,
                         help='remove = remove the final layer of the base detector. '
                              'randinit = randomly initialize novel weights.')
     parser.add_argument('--param-name', type=str, nargs='+', help='Target parameter names',

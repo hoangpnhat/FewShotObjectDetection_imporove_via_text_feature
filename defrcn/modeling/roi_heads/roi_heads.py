@@ -3,7 +3,8 @@ import logging
 import numpy as np
 from torch import nn
 from typing import Dict
-from detectron2.layers import ShapeSpec, cat
+from detectron2.layers import ShapeSpec, cat, nonzero_tuple
+
 from detectron2.utils.registry import Registry
 from detectron2.modeling.matcher import Matcher
 from detectron2.modeling.poolers import ROIPooler
@@ -16,6 +17,8 @@ from detectron2.modeling.proposal_generator.proposal_utils import add_ground_tru
 from .box_head import build_box_head
 from .fast_rcnn import ROI_HEADS_OUTPUT_REGISTRY, FastRCNNOutputLayers, FastRCNNOutputs
 
+from defrcn.data.builtin_meta import PASCAL_VOC_ALL_CATEGORIES, PASCAL_VOC_BASE_CATEGORIES, PASCAL_VOC_NOVEL_CATEGORIES
+from defrcn.data.builtin_meta import _get_coco_fewshot_instances_meta
 
 from .attentive_modules import *
 from .my_module import *
@@ -524,8 +527,6 @@ class StandardROIHeads(ROIHeads):
             return pred_instances
 
 
-
-
 @ROI_HEADS_REGISTRY.register()
 class TextRes5ROIHeads(Res5ROIHeads):
 
@@ -547,7 +548,6 @@ class TextRes5ROIHeads(Res5ROIHeads):
         self.distill_mode = cfg.MODEL.ROI_HEADS.DISTILLATE
         self.novel_tuning = True
         self.save_dir = cfg.OUTPUT_DIR
-        # self.init_super_cls2(cfg)
         self.student_l2_loss = cfg.MODEL.ROI_HEADS.L2
         self.student_l2_loss_cosine = cfg.MODEL.ROI_HEADS.L2_COSINE
         self.student_kl_loss = cfg.MODEL.ROI_HEADS.KL
@@ -570,82 +570,11 @@ class TextRes5ROIHeads(Res5ROIHeads):
         )
         self.tracker_copy_weight = False
 
-    def init_super_cls2(self, cfg):
-        self.get_class(cfg)
-
-        # super_class = cfg.MODEL.ROI_HEADS.PSEUDO_CLASS_VOC
-        # super_class = {key: val for [key, val] in super_class}
-        # super_class = torch.tensor([super_class[i] for i in self.classes])
-        # bg_ = torch.ones(1, super_class.shape[1]) * (self.num_k-1)
-        # super_class = torch.cat([super_class, bg_], dim=0)
-        # print('super_class', super_class)
-        # self.super_class = super_class.to(int).cuda()
-        # assert 0
-        return
-
-    def get_class(self, cfg):
-        dataset_name = cfg.DATASETS.TRAIN[0]
-        is_coco = True if 'coco' in dataset_name else False
-
-        if is_coco:
-            data = {i['name']: i for i in cfg.SUPER_CLASS}
-        else:
-            data = {i['voc_name']: i for i in cfg.SUPER_CLASS}
-
-        metadata_dict = MetadataCatalog.get(dataset_name)
-        is_novel = True if 'shot' in dataset_name else False
-
-        if is_novel:
-            if 'all' in dataset_name:
-                self.classes = metadata_dict.thing_classes
-            else:
-                self.classes = metadata_dict.novel_classes
-                # metadata_dict.novel_dataset_id_to_contiguous_id
-        else:
-            self.classes = metadata_dict.base_classes
-
-        super_class = [data[name]['super_id'] for name in self.classes]
-
-        unique_super_cls = set(super_class)
-        self.num_super_cls = len(unique_super_cls)
-
-        cls_id_to_contiguous_id = {k: i for i,
-                                   k in enumerate(unique_super_cls)}
-        self.mapper = torch.tensor(
-            [cls_id_to_contiguous_id[i] for i in super_class])
-
-        # self.super2class = np.where()
-
-        self.cls2fg = self.mapper.clone()
-
-        for i in self.mapper.unique():
-            index = torch.where(self.mapper == i)[0]
-            self.cls2fg[index] = torch.arange(len(index))
-
-        print(self.mapper)
-        # assert 0
-        return
-
-    def get_class1(self, cfg):
-        dataset_name = cfg.DATASETS.TRAIN[0]
-
-        metadata_dict = MetadataCatalog.get(dataset_name)
-        is_novel = True if 'shot' in dataset_name else False
-
-        if is_novel:
-            if 'all' in dataset_name:
-                self.classes = metadata_dict.thing_classes
-            else:
-                self.classes = metadata_dict.novel_classes
-                metadata_dict.novel_dataset_id_to_contiguous_id
-        else:
-            self.classes = metadata_dict.base_classes
-
     def __init_LV_model__(self, input_size, cfg):
         # return
         self.attention = LV_attention(
             input_size, cfg=cfg, is_multi=False)
-        if self.student_training:
+        if self.training:
             # self.mlp_adapter = MLP(input_size, widening_factor=2)
             # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
 
@@ -663,24 +592,8 @@ class TextRes5ROIHeads(Res5ROIHeads):
         # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
         pass
 
-    def forward_with_text_attention(self, fg_features, num_preds_per_image=None, gt_classes=None):
-        # with torch.no_grad():
-        #     roi_gt, roi_cls = self.get_roi_with_gt2(
-        #         [features[f] for f in self.in_features], targets)
-        # ot_feat_input = torch.cat(roi_gt, dim=0).unsqueeze(0)
-        # ot_cls_input = torch.cat(roi_cls, dim=0).unsqueeze(0)
 
-        feat = self.attention(
-            fg_features, gt_classes, num_preds_per_image)
-        # att = torch.cat(sim2stext, gim2gtext)
-        # att = self.pro_att(att).softmax(dim=-1)
-        # fg_features = self.atten_bb(fg_features, None)[0]
-        # print('fg_features: ', fg_features.shape)
-        # assert 0
-        # att_ft = sim2stext+gim2gtext
-        return feat
-
-    def forward_adapter(self, fg_features, teacher_features):
+    def forward_adapter(self, fg_features, teacher_features=None):
 
         # feat = self.attention.forward_wo_label(fg_features)
         feat = self.mlp_adapter(fg_features)
@@ -811,16 +724,19 @@ class TextRes5ROIHeads(Res5ROIHeads):
         loss_att, output_att = self.attention(feature_pooled, gt_classes, num_preds_per_image)
         
         # loss_att, output_att = self.attention(feature_pooled)
-        
+        # print(output_att['sim2stext'].shape)
+        # print(output_att.len)
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             feature_pooled, output_att['sim2stext'])
         output_att['pred_logits'] = pred_class_logits
         output_att['pred_bbox'] = pred_proposal_deltas
         return output_att, loss_att
 
-    def forward_student(self, feature_pooled, proposals, teacher_output):
-
-        teacher_features = teacher_output.get('sim2stext', None)
+    def forward_student(self, feature_pooled, proposals, teacher_output=None):
+        if teacher_output is not None:
+            teacher_features = teacher_output.get('sim2stext')
+        else:
+            teacher_features = None
 
         att_feature, loss = self.forward_adapter(
             feature_pooled, teacher_features=teacher_features)
@@ -828,7 +744,8 @@ class TextRes5ROIHeads(Res5ROIHeads):
         pred_class_logits, pred_proposal_deltas = self.stu_box_predictor(
             feature_pooled, att_feature)
 
-        if self.student_training and self.training and self.distill_mode and self.student_kl_loss:
+        # if self.student_training and self.training and self.distill_mode and self.student_kl_loss:
+        if self.training:
             t_logits = teacher_output['pred_logits']
             # if self.novel_tuning:
             #     t_logits, _ = self.stu_box_predictor(
@@ -872,12 +789,12 @@ class TextRes5ROIHeads(Res5ROIHeads):
         feature_pooled = box_features.mean(dim=[2, 3])  # pooled to 1x1
 
         t_output = {}
-        if self.teacher_training:
+        # if self.teacher_training or (self.student_training and self.training and self.distill_mode):
+        if self.training:
             t_output, t_loss = self.forward_teacher(
-                feature_pooled, proposals, test_with_gt)
+                feature_pooled, proposals)
             t_loss = {key+'_t': val for key, val in t_loss.items()}
 
-            # t_loss = {key+'_t' : val for key, val in t_loss.items()}
             teacher_outputs = FastRCNNOutputs(
                 self.box2box_transform,
                 t_output['pred_logits'],
@@ -885,8 +802,8 @@ class TextRes5ROIHeads(Res5ROIHeads):
                 proposals,
                 self.smooth_l1_beta,
             )
-
-        if self.student_training:
+            
+            
             s_output, s_loss = self.forward_student(
                 feature_pooled, proposals, t_output)
 
@@ -897,37 +814,27 @@ class TextRes5ROIHeads(Res5ROIHeads):
                 proposals,
                 self.smooth_l1_beta,
             )
-
-        if self.training:
+            
+            
             losses = {}
-            if self.teacher_training:
-                loss = teacher_outputs.losses()
-                loss = {key+'_t': val for key, val in loss.items()}
+            teacher_loss = teacher_outputs.losses()
+            teacher_loss = {key+'_t': val for key, val in teacher_loss.items()}
 
-                losses.update(loss)
-                losses.update(t_loss)
-            if self.student_training:
-                losses.update(student_outputs.losses())
-                losses.update(s_loss)
+            losses.update(teacher_loss)
+            losses.update(t_loss)
+
+            losses.update(student_outputs.losses())
+            losses.update(s_loss)
 
             return [], losses
         else:
-            if self.teacher_training:
-                pred_instances, _ = teacher_outputs.inference(
-                    self.test_score_thresh,
-                    self.test_nms_thresh,
-                    self.test_detections_per_img,
-                )
-            if self.student_training:
-                pred_instances, _ = student_outputs.inference(
-                    self.test_score_thresh,
-                    self.test_nms_thresh,
-                    self.test_detections_per_img,
-                )
+            s_output, s_loss = self.forward_student(feature_pooled, proposals, None)
+            pred_instances, _ = student_outputs.inference(
+                self.test_score_thresh,
+                self.test_nms_thresh,
+                self.test_detections_per_img,
+            )
             return pred_instances, {}
-
-
-
 
 @ROI_HEADS_REGISTRY.register()
 class TextRes5ROIHeads_VKV(TextRes5ROIHeads):
@@ -956,6 +863,7 @@ class TextRes5ROIHeads_VKV(TextRes5ROIHeads):
         # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
         pass
 
+
 @ROI_HEADS_REGISTRY.register()
 class TextRes5ROIHeads_textDomination(TextRes5ROIHeads):
     def __init__(self, cfg, input_shape):
@@ -982,3 +890,200 @@ class TextRes5ROIHeads_textDomination(TextRes5ROIHeads):
         # self.attention = LV_selfttention(input_size, cfg=cfg, is_multi=False)
         # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
         pass
+
+
+@ROI_HEADS_REGISTRY.register()
+class TextRes5ROIHeads_textDomination_VKV(TextRes5ROIHeads_textDomination):
+    def __init__(self, cfg, input_shape):
+        super().__init__(cfg, input_shape)
+
+    def __init_LV_model__(self, input_size, cfg):
+        # return
+        self.attention = LV_attention_textDomination_VKV(
+            input_size, cfg=cfg, is_multi=False)
+        if self.student_training:
+            # self.mlp_adapter = MLP(input_size, widening_factor=2)
+            # self.mlp_adapter = Adaptor(input_size, cfg=cfg, is_multi=False)
+
+            self.mlp_adapter = torch.nn.Sequential(
+                nn.Linear(input_size, input_size//2, bias=True),
+                nn.ReLU(),
+                nn.Linear(input_size//2, input_size, bias=True),
+                nn.ReLU(),
+            )
+
+            # for p in self.attention.parameters():
+            #     p.requires_grad = False
+
+        # self.attention = LV_selfttention(input_size, cfg=cfg, is_multi=False)
+        # self.atten_bb = LV_attentionv2(input_size, cfg=cfg, is_multi=False)
+        pass
+
+@ROI_HEADS_REGISTRY.register()
+class SematicRes5ROIHeads(Res5ROIHeads):
+    def __init__(self, cfg, input_shape):
+        super().__init__(cfg, input_shape)
+        self.__init_LV_model__(self.out_channels, cfg)
+
+
+        self.box_predictor = ROI_HEADS_OUTPUT_REGISTRY.get(self.output_layer)(
+            cfg, self.out_channels, self.num_classes, self.cls_agnostic_bbox_reg,
+            # num_super_classes=super_num_class
+        )
+
+    def __init_LV_model__(self, input_size, cfg):
+        # return
+        self.attention = SematicProposalAttention(
+            input_size, cfg=cfg, is_multi=False)
+        pass
+    def _get_gt_proposals(self, matched_idxs, matched_labels, gt_classes):
+        """
+        Based on the matching between N proposals and M groundtruth,
+        sample the proposals and set their classification labels.
+
+        Args:
+            matched_idxs (Tensor): a vector of length N, each is the best-matched
+                gt index in [0, M) for each proposal.
+            matched_labels (Tensor): a vector of length N, the matcher's label
+                (one of cfg.MODEL.ROI_HEADS.IOU_LABELS) for each proposal.
+            gt_classes (Tensor): a vector of length M.
+
+        Returns:
+            Tensor: a vector of indices of sampled proposals. Each is in [0, N).
+            Tensor: a vector of the same length, the classification label for
+                each sampled proposal. Each sample is labeled as either a category in
+                [0, num_classes) or the background (num_classes).
+        """
+        has_gt = gt_classes.numel() > 0
+        # Get the corresponding GT for each proposal
+        if has_gt:
+            gt_classes = gt_classes[matched_idxs]
+            # Label unmatched proposals (0 label from matcher) as background (label=num_classes)
+            gt_classes[matched_labels == 0] = self.num_classes
+            # Label ignore proposals (-1 label)
+            gt_classes[matched_labels == -1] = -1
+        else:
+            gt_classes = torch.zeros_like(matched_idxs) + self.num_classes
+
+        # print('self.batch_size_per_image:', self.batch_size_per_image)
+        # print('self.positive_sample_fraction:', self.positive_sample_fraction)
+        # print('self.num_classes:', self.num_classes)
+        from detectron2.layers import nonzero_tuple
+        positive = nonzero_tuple(
+            (gt_classes != -1) & (gt_classes != self.num_classes))[0]
+
+        negative = nonzero_tuple(gt_classes == self.num_classes)[0]
+
+        # sampled_fg_idxs, sampled_bg_idxs = subsample_labels(
+        #     gt_classes,
+        #     self.batch_size_per_image,
+        #     self.positive_sample_fraction,
+        #     self.num_classes,
+        # )
+
+        sampled_idxs = torch.cat([positive, negative], dim=0)
+        return sampled_idxs, gt_classes[sampled_idxs]
+
+    @torch.no_grad()
+    def label_proposals(self, proposals, targets):
+
+        proposals_with_gt = []
+        for proposals_per_image, targets_per_image in zip(proposals, targets):
+            has_gt = len(targets_per_image) > 0
+            match_quality_matrix = pairwise_iou(
+                targets_per_image.gt_boxes, proposals_per_image.proposal_boxes
+            )
+            matched_idxs, matched_labels = self.proposal_matcher(
+                match_quality_matrix)
+            sampled_idxs, gt_classes = self._get_gt_proposals(
+                matched_idxs, matched_labels, targets_per_image.gt_classes
+            )
+
+            # Set target attributes of the sampled proposals:
+            # proposals_per_image = proposals_per_image[sampled_idxs]
+            proposals_per_image.gt_classes = gt_classes
+            if has_gt:
+                sampled_targets = matched_idxs[sampled_idxs]
+                # We index all the attributes of targets that start with "gt_"
+                # and have not been added to proposals yet (="gt_classes").
+                # NOTE: here the indexing waste some compute, because heads
+                # like masks, keypoints, etc, will filter the proposals again,
+                # (by foreground/background, or number of keypoints in the image, etc)
+                # so we essentially index the data twice.
+                for (trg_name, trg_value) in targets_per_image.get_fields().items():
+                    if trg_name.startswith("gt_") and not proposals_per_image.has(trg_name):
+                        proposals_per_image.set(
+                            trg_name, trg_value[sampled_targets])
+            # If no GT is given in the image, we don't know what a dummy gt value can be.
+            # Therefore the returned proposals won't have any gt_* fields, except for a
+            # gt_classes full of background label.
+
+            proposals_with_gt.append(proposals_per_image)
+
+        return proposals_with_gt
+
+    def forward_att(self, feature_pooled,training,gt_classes=0):
+        loss_att, output_att = self.attention(feature_pooled,gt_classes,training)
+        pred_class_logits, pred_proposal_deltas = self.box_predictor(
+            feature_pooled, output_att['sim2stext'])
+        # print(pred_class_logits.shape)
+        # print(gt_classes.shape)
+        output_att['pred_logits'] = pred_class_logits
+        output_att['pred_bbox'] = pred_proposal_deltas
+        return output_att, loss_att
+    def forward(self, images, features, proposals, targets=None):
+        del images
+        test_with_gt = True if (not self.training) and targets else False
+        # print('test_with_gt:', test_with_gt)
+        if self.training:
+            proposals = self.label_and_sample_proposals(proposals, targets)
+            gt_classes = cat([p.gt_classes for p in proposals], dim=0)
+
+            
+        elif test_with_gt:  # only use for teacher
+            proposals = self.label_proposals(proposals, targets)
+
+        proposal_boxes = [x.proposal_boxes for x in proposals]
+        box_features = self._shared_roi_transform(
+            [features[f] for f in self.in_features], proposal_boxes
+        )
+        feature_pooled = box_features.mean(dim=[2, 3])  # pooled to 1x1
+
+        att_output = {}
+        # if self.teacher_training or (self.student_training and self.training and self.distill_mode):
+        if self.training:
+            att_output, att_loss = self.forward_att(
+                feature_pooled,True, gt_classes)
+            att_loss = {key+'_t': val for key, val in att_loss.items()}
+
+            outputs = FastRCNNOutputs(
+                self.box2box_transform,
+                att_output['pred_logits'],
+                att_output['pred_bbox'],
+                proposals,
+                self.smooth_l1_beta,
+            )            
+            losses = {}
+            loss = outputs.losses()
+            loss = {key+'_t': val for key, val in loss.items()}
+
+            losses.update(loss)
+            losses.update(att_loss)
+
+            return [], losses
+        else:
+            att_output, att_loss = self.forward_att(
+                feature_pooled,training=False)
+            outputs = FastRCNNOutputs(
+                self.box2box_transform,
+                att_output['pred_logits'],
+                att_output['pred_bbox'],
+                proposals,
+                self.smooth_l1_beta,
+            )            
+            pred_instances, _ = outputs.inference(
+                self.test_score_thresh,
+                self.test_nms_thresh,
+                self.test_detections_per_img,
+            )
+            return pred_instances, {}

@@ -38,4 +38,12 @@ datasets/VOC2012
 datasets/vocsplit
 datasets/
 ImageNetPretrained/
+<<<<<<< HEAD
 .word_vectors_cache/
+=======
+.word_vectors_cache/
+*.pkl
+*.txt
+
+core
+>>>>>>> 28176a0d38cc75fb88ba3ec2dc12c298bb22fdaa

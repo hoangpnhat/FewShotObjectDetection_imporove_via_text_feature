@@ -6,7 +6,8 @@ IMAGENET_PRETRAIN=ImageNetPretrained/MSRA/R-101.pkl                            #
 IMAGENET_PRETRAIN_TORCH=ImageNetPretrained/torchvision/resnet101-5d3b4d8f.pth  # <-- change it to you path
 SPLIT_ID=$2
 # IMAGENET_PRETRAIN=checkpoints/voc/exp1/defrcn_det_r101_base1/model_final.pth
-
+N_GPUS=1
+export CUDA_VISIBLE_DEVICES=3
 # ------------------------------- Base Pre-train ---------------------------------- #
 python3 main.py --num-gpus 1 --config-file configs/voc/defrcn_det_r101_base${SPLIT_ID}.yaml     \
     --opts MODEL.WEIGHTS ${IMAGENET_PRETRAIN}                                                   \
