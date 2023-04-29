@@ -933,8 +933,19 @@ class SematicRes5ROIHeads(Res5ROIHeads):
 
     def __init_LV_model__(self, input_size, cfg):
         # return
+        self.addition_model = cfg.MODEL.RPN.ADDITION_MODEL
+        if self.addition_model is not None:
+            if self.addition_model == "glove":
+                self.semantic_dim = 300
+            elif self.addition_model == "clip":
+                self.semantic_dim = 512
         self.attention = SematicProposalAttention(
             input_size, cfg=cfg, is_multi=False)
+        self.output_projection = nn.Linear(input_size,self.semantic_dim)
+        self.sematic_projection = nn.Linear(self.semantic_dim,input_size)
+        self.projection_matrix = nn.Parameter(torch.randn(self.semantic_dim, input_size) * 1e-8)
+
+        
         pass
     def _get_gt_proposals(self, matched_idxs, matched_labels, gt_classes):
         """
@@ -1022,8 +1033,30 @@ class SematicRes5ROIHeads(Res5ROIHeads):
 
         return proposals_with_gt
 
-    def forward_att(self, feature_pooled,training,gt_classes=0):
-        loss_att, output_att = self.attention(feature_pooled,gt_classes,training)
+    def forward_att(self, feature_pooled,gt_classes=0):
+        loss_att, output_att = self.attention(feature_pooled)
+        
+        # attentive_feat = self.output_projection(output_att['sim2stext'])
+        # attentive_feat = F.relu(attentive_feat) 
+        # attentive_score = torch.matmul(attentive_feat, output_att['text_feat'].transpose(0, 1))
+        
+        
+        # sematic_feat = self.sematic_projection(output_att['text_feat'])
+        # sematic_feat = F.relu(sematic_feat)
+        
+        sematic_feat = torch.matmul(output_att['text_feat'], self.projection_matrix)
+        sematic_feat = sematic_feat / torch.sqrt(torch.tensor(output_att['sim2stext'].size(1), dtype=torch.float))
+        
+        attentive_score = torch.matmul(output_att['sim2stext'], sematic_feat.transpose(0,1))
+        if self.training:
+            loss_entropy=F.cross_entropy(
+                attentive_score, gt_classes , reduction="mean", ignore_index=0
+            )
+            # import torch.nn.utils as utils
+            # utils.clip_grad_norm_(loss_entropy, 1.0)
+            loss_att['CE_attention_loss'] = loss_entropy
+
+        
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             feature_pooled, output_att['sim2stext'])
         # print(pred_class_logits.shape)
@@ -1053,7 +1086,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         # if self.teacher_training or (self.student_training and self.training and self.distill_mode):
         if self.training:
             att_output, att_loss = self.forward_att(
-                feature_pooled,True, gt_classes)
+                feature_pooled, gt_classes)
             att_loss = {key+'_t': val for key, val in att_loss.items()}
 
             outputs = FastRCNNOutputs(
@@ -1073,7 +1106,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
             return [], losses
         else:
             att_output, att_loss = self.forward_att(
-                feature_pooled,training=False)
+                feature_pooled)
             outputs = FastRCNNOutputs(
                 self.box2box_transform,
                 att_output['pred_logits'],
@@ -1087,3 +1120,25 @@ class SematicRes5ROIHeads(Res5ROIHeads):
                 self.test_detections_per_img,
             )
             return pred_instances, {}
+@ROI_HEADS_REGISTRY.register()
+class SematicRes5ROIHeadsCrossOutput(SematicRes5ROIHeads):
+    def __init__(self, cfg, input_shape):
+        super().__init__(cfg, input_shape)
+    def forward_att(self, feature_pooled,gt_classes=0):
+        loss_att, output_att = self.attention(feature_pooled)
+        
+        attentive_feat = self.output_projection(output_att['sim2stext'])
+        attentive_feat = F.relu(attentive_feat) 
+        attentive_score = torch.matmul(attentive_feat, output_att['text_feat'].transpose(0, 1))
+ 
+        # if self.training:
+        #     loss_att['CE_attention_loss']=F.cross_entropy(
+        #         attentive_score, gt_classes
+        #     )
+        pred_class_logits, pred_proposal_deltas = self.box_predictor(
+            feature_pooled, attentive_score)
+        # print(pred_class_logits.shape)
+        # print(gt_classes.shape)
+        output_att['pred_logits'] = pred_class_logits
+        output_att['pred_bbox'] = pred_proposal_deltas
+        return output_att, loss_att
