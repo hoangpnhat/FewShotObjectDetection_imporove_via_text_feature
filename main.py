@@ -12,7 +12,7 @@ import torch
 
 
 def batch_size_based_cfg_adjustment(cfg):
-    alpha = 16 // cfg.SOLVER.IMS_PER_BATCH
+    alpha = 16 / cfg.SOLVER.IMS_PER_BATCH
     # alpha = 1
     cfg.defrost()
     cfg.SOLVER.BASE_LR = cfg.SOLVER.BASE_LR/alpha

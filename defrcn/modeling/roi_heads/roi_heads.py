@@ -1022,15 +1022,12 @@ class SematicRes5ROIHeads(Res5ROIHeads):
 
         return proposals_with_gt
 
-    def forward_att(self, feature_pooled):
-
-        loss_att, output_att = self.attention(feature_pooled)
-        
-        # loss_att, output_att = self.attention(feature_pooled)
-        # print(output_att['sim2stext'].shape)
-        # print(output_att.len)
+    def forward_att(self, feature_pooled,training,gt_classes=0):
+        loss_att, output_att = self.attention(feature_pooled,gt_classes,training)
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             feature_pooled, output_att['sim2stext'])
+        # print(pred_class_logits.shape)
+        # print(gt_classes.shape)
         output_att['pred_logits'] = pred_class_logits
         output_att['pred_bbox'] = pred_proposal_deltas
         return output_att, loss_att
@@ -1040,10 +1037,11 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         # print('test_with_gt:', test_with_gt)
         if self.training:
             proposals = self.label_and_sample_proposals(proposals, targets)
-            # gt_classes = cat([p.gt_classes for p in proposals], dim=0)
+            gt_classes = cat([p.gt_classes for p in proposals], dim=0)
+
+            
         elif test_with_gt:  # only use for teacher
             proposals = self.label_proposals(proposals, targets)
-            # gt_classes = cat([p.gt_classes for p in proposals], dim=0)
 
         proposal_boxes = [x.proposal_boxes for x in proposals]
         box_features = self._shared_roi_transform(
@@ -1055,7 +1053,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         # if self.teacher_training or (self.student_training and self.training and self.distill_mode):
         if self.training:
             att_output, att_loss = self.forward_att(
-                feature_pooled)
+                feature_pooled,True, gt_classes)
             att_loss = {key+'_t': val for key, val in att_loss.items()}
 
             outputs = FastRCNNOutputs(
