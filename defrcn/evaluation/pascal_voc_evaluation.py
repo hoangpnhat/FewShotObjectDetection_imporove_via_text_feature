@@ -89,7 +89,6 @@ class PascalVOCDetectionEvaluator(DatasetEvaluator):
             for clsid, lines in predictions_per_rank.items():
                 predictions[clsid].extend(lines)
         del all_predictions
-
         self._logger.info(
             "Evaluating {} using {} metric. "
             "Note that results do not use the official Matlab API.".format(

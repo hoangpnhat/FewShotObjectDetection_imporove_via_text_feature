@@ -101,7 +101,8 @@ def fast_rcnn_inference_single_image(
     Returns:
         Same as `fast_rcnn_inference`, but for only one image.
     """
-    scores = scores[:, :-1]
+    scores = scores[:, :-1] # remove score of background
+    
     num_bbox_reg_classes = boxes.shape[1] // 4
     # Convert to Boxes to use the `clip` function ...
     boxes = Boxes(boxes.reshape(-1, 4))
@@ -117,6 +118,7 @@ def fast_rcnn_inference_single_image(
         boxes = boxes[filter_inds[:, 0], 0]
     else:
         boxes = boxes[filter_mask]
+    
     scores = scores[filter_mask]
 
     # Apply per-class NMS
@@ -343,7 +345,10 @@ class FastRCNNOutputs(object):
         boxes = self.predict_boxes()
         scores = self.predict_probs()
         image_shapes = self.image_shapes
-
+        
+        # predict_class = torch.argmax(scores[0], axis=1)
+        # predict_class = predict_class.tolist()
+        # print(predict_class)
         return fast_rcnn_inference(
             boxes,
             scores,
@@ -407,5 +412,64 @@ class FastRCNNOutputLayers(nn.Module):
             att_x = F.dropout(att_x, self._dropout_ratio,
                               training=self.training)
         scores = self.cls_score(att_x)
+
+        return scores, proposal_deltas
+
+
+
+
+@ROI_HEADS_OUTPUT_REGISTRY.register()
+class FastRCNNAttentionOutputLayers(nn.Module):
+    """
+    Two linear layers for predicting Fast R-CNN outputs:
+      (1) proposal-to-detection box regression deltas
+      (2) classification scores
+    """
+
+    def __init__(
+        self, cfg, input_size, num_classes, cls_agnostic_bbox_reg, box_dim=4
+    ):
+        """
+        Args:
+            cfg: config
+            input_size (int): channels, or (channels, height, width)
+            num_classes (int): number of foreground classes
+            cls_agnostic_bbox_reg (bool): whether to use class agnostic for bbox regression
+            box_dim (int): the dimension of bounding boxes.
+                Example box dimensions: 4 for regular XYXY boxes and 5 for rotated XYWHA boxes
+        """
+        super(FastRCNNAttentionOutputLayers, self).__init__()
+
+        if not isinstance(input_size, int):
+            input_size = np.prod(input_size)
+
+        # The prediction layer for num_classes foreground classes and one
+        # background class
+        # (hence + 1)
+        self.cls_score = nn.Linear(input_size, num_classes + 1)
+        num_bbox_reg_classes = 1 if cls_agnostic_bbox_reg else num_classes
+        self.bbox_pred = nn.Linear(input_size, num_bbox_reg_classes * box_dim)
+
+        nn.init.normal_(self.cls_score.weight, std=0.01)
+        nn.init.normal_(self.bbox_pred.weight, std=0.001)
+        for l in [self.cls_score, self.bbox_pred]:
+            nn.init.constant_(l.bias, 0)
+
+        self._do_cls_dropout = cfg.MODEL.ROI_HEADS.CLS_DROPOUT
+        self._dropout_ratio = cfg.MODEL.ROI_HEADS.DROPOUT_RATIO
+
+    def forward(self, x, att_x=None):
+        if x.dim() > 2:
+            x = torch.flatten(x, start_dim=1)
+
+        proposal_deltas = self.bbox_pred(x)
+        # if not isinstance(type(att_x), type(torch.tensor)):
+        #     att_x = x
+
+        att_x = x if isinstance(att_x, type(None)) else att_x
+        if self._do_cls_dropout:
+            att_x = F.dropout(att_x, self._dropout_ratio,
+                              training=self.training)
+        scores = att_x
 
         return scores, proposal_deltas

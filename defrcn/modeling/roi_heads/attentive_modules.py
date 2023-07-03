@@ -11,7 +11,7 @@ from detectron2.data import MetadataCatalog, DatasetCatalog
 from torchnlp.word_to_vector import GloVe
 from .my_module import *
 from ..meta_arch.gdl import decouple_layer, AffineLayer
-from defrcn.utils.class_embedding import get_class_embed
+from defrcn.utils.class_embedding import get_class_embed, create_normalized_orthogonal_tensor
 from defrcn.utils.class_name import get_class_name
 
 
@@ -191,7 +191,7 @@ class SematicProposalAttention(nn.Module):
             self.__init_attention_layer__(input_size)
            
     def __init_language_model__(self,cfg):
-        self.addition_model = cfg.MODEL.RPN.ADDITION_MODEL
+        self.addition_model = cfg.MODEL.ADDITION.NAME
         self.num_classes = cfg.MODEL.ROI_HEADS.NUM_CLASSES
         
         
@@ -205,8 +205,13 @@ class SematicProposalAttention(nn.Module):
             self.class_names = get_class_name(cfg)
             self.class_embed = get_class_embed(self.class_names, self.addition_model, include_bg=self.fixed_bg).to(self.device)
             if not self.fixed_bg:
-                self.bg_feature_init = torch.randn(1, self.semantic_dim)
-                self.bg_feature = nn.parameter.Parameter(self.bg_feature_init.clone(), requires_grad=True)
+                # self.bg_feature_init = torch.randn(1, self.semantic_dim)
+                # self.bg_feature = nn.parameter.Parameter(self.bg_feature_init.clone(), requires_grad=True)
+                
+                average_vector_foreground = torch.mean(self.class_embed, dim=0,keepdim=True)
+                self.bg_feature = torch.neg(average_vector_foreground)
+                # self.bg_feature = nn.parameter.Parameter(self.bg_feature_init.clone(), requires_grad=True)
+                # self.bg_feature = create_normalized_orthogonal_tensor(average_vector_frontground)
 
 
         embed = torch.zeros(len(self.class_names), self.semantic_dim).to(self.device)
@@ -217,8 +222,10 @@ class SematicProposalAttention(nn.Module):
         self.embed = embed
     def __init_attention_layer__(self, input_size):
             init_scale = 0.02
-            self.attention = SingleHeadSiameseAttention(self.semantic_dim)
+            self.attention = SingleHeadSiameseAttention(input_size)
             self.query_projection = nn.Linear(input_size,self.semantic_dim)
+            self.output_projection = nn.Linear(input_size,self.semantic_dim)
+            
             
             self.key_projection = nn.Linear(self.semantic_dim, input_size)
             self.value_projection = nn.Linear(self.semantic_dim, input_size)
@@ -238,34 +245,37 @@ class SematicProposalAttention(nn.Module):
         })
         return loss,output
     
-    def forward(self, visual_feat,gt_classes,training):
+    def forward(self, visual_feat):
         loss, output = self.forward_language_model()
 
         text_feat = output['text_feat']
-        value_feat = text_feat.detach().clone().to(self.device)
-        visual_feat = self.query_projection(visual_feat)
-        visual_feat =F.relu(visual_feat)
+        residual = text_feat.detach().clone().to(self.device)
         
-        # text_feat = self.key_projection(text_feat)
-        # value_feat = self.value_projection(value_feat)
-        # text_feat = F.relu(text_feat)
-        # value_feat = F.relu(value_feat)
+        value_feat = text_feat.detach().clone().to(self.device)
+        # visual_feat = self.query_projection(visual_feat)
+        # visual_feat =F.relu(visual_feat)
+        
+        text_feat = self.key_projection(text_feat)
+        value_feat = self.value_projection(value_feat)
+        text_feat = F.relu(text_feat)
+        value_feat = F.relu(value_feat)
 
         sim2stext = self.attention(
             q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
         
-        if training:
-            loss['CE_attention_loss']=F.cross_entropy(
-                torch.matmul(sim2stext, text_feat.transpose(0, 1)), gt_classes
-            )
+
+        sim2stext = F.relu(sim2stext)
         
         # output['sim2stext'] = (1-alpha)*sim2stext + \
         #     alpha*self.forward_wo_label(visual_feat)
-        sim2stext = self.value_projection(sim2stext)
-        sim2stext = F.relu(sim2stext)
+        # sim2stext = self.value_projection(sim2stext)
+        # sim2stext = F.relu(sim2stext)
         output['sim2stext'] = sim2stext
+        output['text_feat'] = residual
 
         return loss,output
+
+        
 class LV_attention(nn.Module):
     def __init__(self,
                  input_size,

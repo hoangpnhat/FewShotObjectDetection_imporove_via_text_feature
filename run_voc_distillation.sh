@@ -16,11 +16,12 @@ SAVE_DIR=checkpoints/voc/${EXP_NAME}
 # Base distillating
 cfg_MODEL="
     MODEL.ROI_HEADS.NAME TextRes5ROIHeads
-    MODEL.ROI_HEADS.TEACHER_TRAINING True
-    MODEL.ROI_HEADS.STUDENT_TRAINING True
-    MODEL.ROI_HEADS.DISTILLATE True
-    MODEL.ROI_HEADS.KL True
-    MODEL.ROI_HEADS.L2 True
+    MODEL.ADDITION.TEACHER_TRAINING True
+    MODEL.ADDITION.STUDENT_TRAINING False
+    MODEL.ADDITION.DISTIL_MODE False
+    MODEL.ADDITION.NAME glove
+    SOLVER.IMS_PER_BATCH 8
+    SOLVER.MAX_ITER 30000
 "
 BASE_DIR=${SAVE_DIR}/defrcn_det_r101_base${SPLIT_ID}
 python3 main.py --num-gpus ${N_GPUS} --config-file configs/voc/defrcn_det_r101_base${SPLIT_ID}.yaml     \
