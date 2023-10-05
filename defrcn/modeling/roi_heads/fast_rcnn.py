@@ -146,6 +146,7 @@ class FastRCNNOutputs(object):
         pred_proposal_deltas,
         proposals,
         smooth_l1_beta,
+        Guided_gt_classes=None,
     ):
         """
         Args:
@@ -187,7 +188,7 @@ class FastRCNNOutputs(object):
             self.gt_boxes = box_type.cat([p.gt_boxes for p in proposals])
             assert proposals[0].has("gt_classes")
             self.gt_classes = cat([p.gt_classes for p in proposals], dim=0)
-
+        self.Guided_gt_classes = Guided_gt_classes
     def _log_accuracy(self):
         """
         Log the accuracy metrics to EventStorage.
@@ -218,7 +219,6 @@ class FastRCNNOutputs(object):
             storage.put_scalar(
                 "fast_rcnn/false_negative", num_false_negative / num_fg
             )
-
     def softmax_cross_entropy_loss(self):
         """
         Compute the softmax cross entropy loss for box classification.
@@ -298,6 +298,7 @@ class FastRCNNOutputs(object):
             A dict of losses (scalar tensors) containing keys "loss_cls" and "loss_box_reg".
         """
         return {
+            # "guilde": self.guide_softmax_cross_entropy_loss(),
             "loss_cls": self.softmax_cross_entropy_loss(),
             "loss_box_reg": self.smooth_l1_loss(),
         }

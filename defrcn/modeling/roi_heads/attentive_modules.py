@@ -12,7 +12,7 @@ from torchnlp.word_to_vector import GloVe
 from .my_module import *
 from ..meta_arch.gdl import decouple_layer, AffineLayer
 from defrcn.utils.class_embedding import get_class_embed, create_normalized_orthogonal_tensor
-from defrcn.utils.class_name import get_class_name
+from defrcn.utils.class_name import get_class_name,get_class_name_test
 
 
 class Sequential(nn.Sequential):
@@ -202,16 +202,19 @@ class SematicProposalAttention(nn.Module):
                 self.semantic_dim = 512
                 
             self.fixed_bg = False
-            self.class_names = get_class_name(cfg)
+            # self.class_names = get_class_name(cfg)
+            self.class_names = get_class_name_test(cfg)
+            print("classes name:",self.class_names)
+
             self.class_embed = get_class_embed(self.class_names, self.addition_model, include_bg=self.fixed_bg).to(self.device)
             if not self.fixed_bg:
                 # self.bg_feature_init = torch.randn(1, self.semantic_dim)
                 # self.bg_feature = nn.parameter.Parameter(self.bg_feature_init.clone(), requires_grad=True)
                 
                 average_vector_foreground = torch.mean(self.class_embed, dim=0,keepdim=True)
-                self.bg_feature = torch.neg(average_vector_foreground)
+                # self.bg_feature = torch.neg(average_vector_foreground)
                 # self.bg_feature = nn.parameter.Parameter(self.bg_feature_init.clone(), requires_grad=True)
-                # self.bg_feature = create_normalized_orthogonal_tensor(average_vector_frontground)
+                self.bg_feature = create_normalized_orthogonal_tensor(average_vector_foreground)
 
 
         embed = torch.zeros(len(self.class_names), self.semantic_dim).to(self.device)

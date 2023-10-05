@@ -41,6 +41,7 @@ def add_new_configs(cfg):
     cfg.MODEL.ADDITION.TEACHER_TRAINING = False
     cfg.MODEL.ADDITION.STUDENT_TRAINING = False
     cfg.MODEL.ADDITION.DISTIL_MODE = False
+    cfg.MODEL.ADDITION.FREEZEATTENTION = False
 class Trainer(DefaultTrainer):
 
     @classmethod
