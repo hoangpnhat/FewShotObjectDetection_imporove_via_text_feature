@@ -31,6 +31,8 @@ def main():
                 res_info = lineinfos[-2].strip()
                 header = res_info.split(':')[-1].split(',')
             res_info = lineinfos[-1].strip()
+            # import pdb; pdb.set_trace()
+
             results.append([fid] + [float(x) for x in res_info.split(':')[-1].split(',')])
 
         results_np = np.array(results)

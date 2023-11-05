@@ -10,7 +10,8 @@ def get_class_name(cfg):
         if 'novel' in dataset:
             classes = PASCAL_VOC_NOVEL_CATEGORIES[int(dataset.split('_')[-1][-1])]
         if 'all' in dataset:
-            classes = PASCAL_VOC_ALL_CATEGORIES[int(dataset.split('_')[-1][-1])]
+            # import pdb; pdb.set_trace()
+            classes = PASCAL_VOC_ALL_CATEGORIES[int(dataset.split('_')[-3][-1])]
     if 'coco' in dataset:
         ret = _get_coco_fewshot_instances_meta()
         if 'base' in dataset:

@@ -925,14 +925,14 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         super().__init__(cfg, input_shape)
         self.__init_LV_model__(self.out_channels, cfg)
         self.device = 'cuda'
-        # self.box_predictor = ROI_HEADS_OUTPUT_REGISTRY.get(self.output_layer)(
-        #     cfg, self.out_channels, self.num_classes, self.cls_agnostic_bbox_reg,
-        #     # num_super_classes=super_num_class
-        # )
         self.box_predictor = ROI_HEADS_OUTPUT_REGISTRY.get(self.output_layer)(
-            cfg, self.out_channels, 15, self.cls_agnostic_bbox_reg,
+            cfg, self.out_channels, self.num_classes, self.cls_agnostic_bbox_reg,
             # num_super_classes=super_num_class
         )
+        # self.box_predictor = ROI_HEADS_OUTPUT_REGISTRY.get(self.output_layer)(
+        #     cfg, self.out_channels, 15, self.cls_agnostic_bbox_reg,
+        #     # num_super_classes=super_num_class
+        # )
 
     def __init_LV_model__(self, input_size, cfg):
         # return
@@ -1068,14 +1068,14 @@ class SematicRes5ROIHeads(Res5ROIHeads):
 
     def forward_att(self, feature_pooled,gt_classes=0):
         loss_att, output_att = self.attention(feature_pooled)
-        Guided_gt_classes = self.cal_CE_att(output_att,gt_classes)
+        # Guided_gt_classes = self.cal_CE_att(output_att,gt_classes)
 
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
             feature_pooled, output_att['sim2stext'])
 
         output_att['pred_logits'] = pred_class_logits
         output_att['pred_bbox'] = pred_proposal_deltas
-        return output_att, loss_att, Guided_gt_classes
+        return output_att, loss_att
 
     def forward(self, images, features, proposals, targets=None):
         
@@ -1099,7 +1099,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         
         if self.training:
             del features
-            att_output, att_loss,Guided_gt_classes = self.forward_att(
+            att_output, att_loss = self.forward_att(
                 feature_pooled, gt_classes)
             del feature_pooled
             outputs = FastRCNNOutputs(
@@ -1107,8 +1107,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
                 att_output['pred_logits'],
                 att_output['pred_bbox'],
                 proposals,
-                self.smooth_l1_beta,
-                Guided_gt_classes,
+                self.smooth_l1_beta
             )   
             att_loss = {key: val for key, val in att_loss.items()}
             losses = {}

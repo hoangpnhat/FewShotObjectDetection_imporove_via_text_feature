@@ -43,13 +43,15 @@ class ScaledDotProductAttention(nn.Module):
         self.softmax = nn.Softmax(dim=2)
 
     def forward(self, q, k, v):
-
+        query =q
         attn = torch.bmm(q, k.transpose(1, 2))
         attn = attn / self.temperature
         log_attn = F.log_softmax(attn, 2)
         attn = self.softmax(attn)
         attn = self.dropout(attn)
         output = torch.bmm(attn, v)
+        # import pdb; pdb.set_trace()
+
         return output, attn, log_attn
 
 
@@ -202,9 +204,9 @@ class SematicProposalAttention(nn.Module):
                 self.semantic_dim = 512
                 
             self.fixed_bg = False
-            # self.class_names = get_class_name(cfg)
-            self.class_names = get_class_name_test(cfg)
-            print("classes name:",self.class_names)
+            self.class_names = get_class_name(cfg)
+            # self.class_names = get_class_name_test(cfg)
+            # print("classes name:",self.class_names)
 
             self.class_embed = get_class_embed(self.class_names, self.addition_model, include_bg=self.fixed_bg).to(self.device)
             if not self.fixed_bg:
@@ -262,6 +264,9 @@ class SematicProposalAttention(nn.Module):
         value_feat = self.value_projection(value_feat)
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
+
+        # import pdb; pdb.set_trace()
+
 
         sim2stext = self.attention(
             q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
@@ -405,6 +410,7 @@ class LV_attention(nn.Module):
 
         sim2stext = self.attention(
             q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
+        import pdb; pdb.set_trace()
 
         sim2stext = F.relu(sim2stext)
 

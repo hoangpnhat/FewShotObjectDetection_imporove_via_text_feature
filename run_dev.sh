@@ -1,16 +1,16 @@
+# EXP_NAME="CLIP"
 EXP_NAME="test"
-# EXP_NAME="test"
 
 SPLIT_ID=1
 N_GPUS=1
 # export CUDA_VISIBLE_DEVICES=4
-export CUDA_VISIBLE_DEVICES=6
+export CUDA_VISIBLE_DEVICES=0
 
 # SEED = 44029952
 
 IMAGENET_PRETRAIN=ImageNetPretrained/MSRA/R-101.pkl
 IMAGENET_PRETRAIN_TORCH=ImageNetPretrained/torchvision/resnet101-5d3b4d8f.pth
-IMAGENET_PRETRAIN=checkpoints/voc/Pure_attention_fix_background_orthogonalMeanClass/teacher_base/defrcn_det_r101_base1/model_reset_surgery.pth
+# IMAGENET_PRETRAIN=checkpoints/voc/CLIP/teacher_base/defrcn_det_r101_base1/model_final.pth
 SAVE_DIR=checkpoints/voc/${EXP_NAME}
 TEACHER_PATH=checkpoints/voc/${EXP_NAME}/teacher_base/defrcn_det_r101_base${SPLIT_ID}
 
@@ -28,9 +28,9 @@ MODEL.ROI_HEADS.NAME SematicRes5ROIHeads
 MODEL.ADDITION.TEACHER_TRAINING True
 MODEL.ADDITION.STUDENT_TRAINING False
 MODEL.ADDITION.DISTIL_MODE False
-MODEL.ADDITION.NAME glove
-SOLVER.IMS_PER_BATCH 4
-SOLVER.MAX_ITER 5000
+MODEL.ADDITION.NAME clip
+SOLVER.IMS_PER_BATCH 12
+SOLVER.MAX_ITER 20000
 "
 
 # # SOLVER.BASE_LR 0.01
@@ -44,21 +44,23 @@ python3 tools/model_surgery.py --dataset voc --method randinit                  
    --save-dir ${TEACHER_PATH}
 
 exit
+
 BASE_WEIGHT=${SAVE_DIR}/teacher_base/defrcn_det_r101_base1/model_reset_surgery.pth
 # fine-tuning
 # ------------------------------ Novel Fine-tuning ------------------------------- #
 # --> 2. TFA-like, i.e. run seed0~9 for robust results (G-FSOD, 80 classes)
 
-for seed in 0 1 2 3 4 5 6 7 8 9
+for shot in 2 3 5 10 
 do
-    for shot in 1  # if final, 10 -> 1 2 3 5 10
+    for seed in 0 1 2 3 4 5 6 7 8 9 
+    # for shot in  2 3 5 10  # if final, 10 -> 1 2 3 5 10
     do
         cfg_MODEL="
             MODEL.ROI_HEADS.NAME SematicRes5ROIHeads
             MODEL.ADDITION.TEACHER_TRAINING True
             MODEL.ADDITION.STUDENT_TRAINING False
             MODEL.ADDITION.DISTIL_MODE False
-            MODEL.ADDITION.NAME glove
+            MODEL.ADDITION.NAME clip
             MODEL.ADDITION.FREEZEATTENTION True
         "
 
@@ -75,4 +77,4 @@ do
         # rm ${OUTPUT_DIR}/model_final.pth
     done
 done
-python3 tools/extract_results.py --res-dir ${SAVE_DIR}/defrcn_gfsod_r101_novel${SPLIT_ID} --shot-list 1 2 3 5 10  # surmarize all results
+python3 tools/extract_results.py --res-dir ${SAVE_DIR}/defrcn_gfsod_r101_novel${SPLIT_ID} --shot-list 1 2 3  # surmarize all results
