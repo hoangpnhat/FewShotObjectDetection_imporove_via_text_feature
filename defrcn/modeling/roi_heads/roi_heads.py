@@ -532,25 +532,25 @@ class TextRes5ROIHeads(Res5ROIHeads):
     def __init__(self, cfg, input_shape):
         super().__init__(cfg, input_shape)
 
-        self.use_mem = cfg.MODEL.ROI_HEADS.USE_MEMORY
-        self.use_ot = cfg.MODEL.ROI_HEADS.USE_OT
-        self.is_freeze_mpl = cfg.MODEL.ROI_HEADS.FREEZE_MPL
-        self.use_background = True
-        self.repeat_time = cfg.MODEL.ROI_HEADS.REPEATED_TIME
-        self.factors = cfg.MODEL.ROI_HEADS.FACTORS
-        self.capacity = cfg.MODEL.ROI_HEADS.MEM_CAPACITY
-        self.use_bbox = cfg.MODEL.ROI_HEADS.USE_BBX
-        self.meta_loss_weight = cfg.MODEL.META_LOSS_WEIGHT
-        self.syn_loss_weight = cfg.MODEL.SYN_LOSS_WEIGHT
-        self.teacher_training = cfg.MODEL.ROI_HEADS.TEACHER_TRAINING
-        self.student_training = cfg.MODEL.ROI_HEADS.STUDENT_TRAINING
-        self.distill_mode = cfg.MODEL.ROI_HEADS.DISTILLATE
-        self.novel_tuning = True
-        self.save_dir = cfg.OUTPUT_DIR
-        self.student_l2_loss = cfg.MODEL.ROI_HEADS.L2
-        self.student_l2_loss_cosine = cfg.MODEL.ROI_HEADS.L2_COSINE
-        self.student_kl_loss = cfg.MODEL.ROI_HEADS.KL
-        self.student_kl_temp = cfg.MODEL.ROI_HEADS.KL_TEMP
+        # self.use_mem = cfg.MODEL.ROI_HEADS.USE_MEMORY
+        # self.use_ot = cfg.MODEL.ROI_HEADS.USE_OT
+        # self.is_freeze_mpl = cfg.MODEL.ROI_HEADS.FREEZE_MPL
+        # self.use_background = True
+        # self.repeat_time = cfg.MODEL.ROI_HEADS.REPEATED_TIME
+        # self.factors = cfg.MODEL.ROI_HEADS.FACTORS
+        # self.capacity = cfg.MODEL.ROI_HEADS.MEM_CAPACITY
+        # self.use_bbox = cfg.MODEL.ROI_HEADS.USE_BBX
+        # self.meta_loss_weight = cfg.MODEL.META_LOSS_WEIGHT
+        # self.syn_loss_weight = cfg.MODEL.SYN_LOSS_WEIGHT
+        # self.teacher_training = cfg.MODEL.ROI_HEADS.TEACHER_TRAINING
+        # self.student_training = cfg.MODEL.ROI_HEADS.STUDENT_TRAINING
+        # self.distill_mode = cfg.MODEL.ROI_HEADS.DISTILLATE
+        # self.novel_tuning = True
+        # self.save_dir = cfg.OUTPUT_DIR
+        # self.student_l2_loss = cfg.MODEL.ROI_HEADS.L2
+        # self.student_l2_loss_cosine = cfg.MODEL.ROI_HEADS.L2_COSINE
+        # self.student_kl_loss = cfg.MODEL.ROI_HEADS.KL
+        # self.student_kl_temp = cfg.MODEL.ROI_HEADS.KL_TEMP
 
         self.__init_LV_model__(self.out_channels, cfg)
 
@@ -1067,7 +1067,12 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         return Guided_gt_classes
 
     def forward_att(self, feature_pooled,gt_classes=0):
-        loss_att, output_att = self.attention(feature_pooled)
+        loss_att = {}
+        attn, output_att = self.attention(feature_pooled)
+        loss_entropy=F.cross_entropy(
+            attn, gt_classes , reduction="mean"
+        )
+        loss_att['GuilderLoss'] = loss_entropy
         # Guided_gt_classes = self.cal_CE_att(output_att,gt_classes)
 
         pred_class_logits, pred_proposal_deltas = self.box_predictor(

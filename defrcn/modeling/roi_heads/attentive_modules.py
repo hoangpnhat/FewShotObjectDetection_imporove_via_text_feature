@@ -82,12 +82,17 @@ class SingleHeadSiameseAttention(nn.Module):
         super().__init__()
         self.n_head = 1
         self.d_model = d_model
-        self.w_qk = nn.Linear(self.d_model, self.n_head *
+        self.w_qk1 = nn.Linear(self.d_model, self.n_head *
+                              self.d_model, bias=False)
+        self.w_qk2 = nn.Linear(self.d_model, self.n_head *
                               self.d_model, bias=False)
 
         self.attention = ScaledDotProductAttention(
             temperature=np.power(self.d_model, 0.5), dropout=dropout)
-        nn.init.normal_(self.w_qk.weight, mean=0, std=np.sqrt(
+        
+        nn.init.normal_(self.w_qk1.weight, mean=0, std=np.sqrt(
+            2.0 / (self.d_model + self.d_model)))
+        nn.init.normal_(self.w_qk2.weight, mean=0, std=np.sqrt(
             2.0 / (self.d_model + self.d_model)))
 
         self.dummy = nn.Parameter(torch.Tensor(1, self.d_model))
@@ -112,8 +117,8 @@ class SingleHeadSiameseAttention(nn.Module):
         sz_b, len_v, _ = v.size()
 
         residual = q
-        q = self.w_qk(q).view(sz_b, len_q, self.n_head, self.d_model)
-        k = self.w_qk(k).view(sz_b, len_k, self.n_head, self.d_model)
+        q = self.w_qk1(q).view(sz_b, len_q, self.n_head, self.d_model)
+        k = self.w_qk2(k).view(sz_b, len_k, self.n_head, self.d_model)
         v = v.view(sz_b, len_v, self.n_head, self.d_model)
         # tsp = tsp.view(sz_b, len_v, self.n_head, self.d_model)
 
@@ -165,7 +170,7 @@ class SingleHeadSiameseAttention(nn.Module):
         )
         output = self.ffn(output)
         # assert 0
-        return output
+        return output, attn
 
 
 
@@ -240,7 +245,7 @@ class SematicProposalAttention(nn.Module):
         
     def forward_language_model(self):
         output = {}
-        loss ={}
+        
         # print("embeding text feature",self.embed.shape)
         if not self.fixed_bg:
             text_feat = torch.cat([self.embed, self.bg_feature], dim=0)  # add bg
@@ -248,15 +253,17 @@ class SematicProposalAttention(nn.Module):
             # 'pred_weights': pred_weights,
             'text_feat': text_feat,
         })
-        return loss,output
+        return output
     
     def forward(self, visual_feat):
-        loss, output = self.forward_language_model()
-
+        output = self.forward_language_model()
+        loss ={}
         text_feat = output['text_feat']
         residual = text_feat.detach().clone().to(self.device)
         
         value_feat = text_feat.detach().clone().to(self.device)
+        import pdb; pdb.set_trace()
+
         # visual_feat = self.query_projection(visual_feat)
         # visual_feat =F.relu(visual_feat)
         
@@ -265,13 +272,12 @@ class SematicProposalAttention(nn.Module):
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
 
-        # import pdb; pdb.set_trace()
 
 
-        sim2stext = self.attention(
+        sim2stext, attn = self.attention(
             q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
         
-
+        
         sim2stext = F.relu(sim2stext)
         
         # output['sim2stext'] = (1-alpha)*sim2stext + \
@@ -281,7 +287,7 @@ class SematicProposalAttention(nn.Module):
         output['sim2stext'] = sim2stext
         output['text_feat'] = residual
 
-        return loss,output
+        return attn,output
 
         
 class LV_attention(nn.Module):
@@ -394,10 +400,12 @@ class LV_attention(nn.Module):
         # print(visual_feat.shape)
 
         loss, output = self.forward_language_model(text)
+        # import pdb; pdb.set_trace()
+
         # sim_feat, gim_feat = self.forward_vision_model(
         # visual_feat, text)
         # visual_feat[None, :],
-        # sim2stext = self.attention1(visual_feat[None, :], stext_feat)[0]
+        # sim2stext = selqf.attention1(visual_feat[None, :], stext_feat)[0]
         
         text_feat = output['text_feat']
         # print('text_feat',text_feat.shape)
@@ -408,9 +416,9 @@ class LV_attention(nn.Module):
         text_feat = F.relu(text_feat)
         value_feat = F.relu(value_feat)
 
+
         sim2stext = self.attention(
             q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
-        import pdb; pdb.set_trace()
 
         sim2stext = F.relu(sim2stext)
 
