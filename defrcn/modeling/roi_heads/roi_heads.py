@@ -1047,36 +1047,44 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         return proposals_with_gt
 
     def cal_CE_att(self, output_att,gt_classes):
+        loss_att = {}
         attentive_feat = self.output_projection(output_att['sim2stext'])
         attentive_feat = F.relu(attentive_feat)
         attentive_score = torch.matmul(attentive_feat, output_att['text_feat'].transpose(0, 1))
-        # loss_entropy=F.cross_entropy(
-        #     attentive_score, gt_classes , reduction="mean"
-        # )
-        # loss_att['GuilderLoss'] = loss_entropy
+
         attentive_score = F.softmax(attentive_score,dim =1)
 
-        threshHold =0.8
-        Guided_gt_classes = gt_classes
-        logits, indices = attentive_score.max(dim=1)
-        for indx,logit in enumerate(logits):
-            if logit >= threshHold:
-                Guided_gt_classes[indx] = indices[indx]
+        loss_entropy=F.cross_entropy(
+            attentive_score, gt_classes , reduction="mean"
+        )
+        loss_att['loss_attentive'] = loss_entropy
+        # import pdb; pdb.set_trace()
+
+        # threshHold =0.8
+        # Guided_gt_classes = gt_classes
+        # logits, indices = attentive_score.max(dim=1)
+        # for indx,logit in enumerate(logits):
+        #     if logit >= threshHold:
+        #         Guided_gt_classes[indx] = indices[indx]
         # print("gt_classes",gt_classes)
         # print(Guided_gt_classes)
-        return Guided_gt_classes
+        return loss_att
 
     def forward_att(self, feature_pooled,gt_classes=0):
-        loss_att = {}
-        attn, output_att = self.attention(feature_pooled)
-        loss_entropy=F.cross_entropy(
-            attn, gt_classes , reduction="mean"
+        attentive_score,output_att = self.attention(feature_pooled)
+        loss_att ={}
+
+        if self.training:
+            # loss_att = self.cal_CE_att(output_att,gt_classes)
+            loss_att['loss_attentive'] = F.cross_entropy(
+            attentive_score[0], gt_classes , reduction="mean"
         )
-        loss_att['GuilderLoss'] = loss_entropy
         # Guided_gt_classes = self.cal_CE_att(output_att,gt_classes)
 
+        # pred_class_logits, pred_proposal_deltas = self.box_predictor(
+        #     feature_pooled, output_att['sim2stext'])
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
-            feature_pooled, output_att['sim2stext'])
+            feature_pooled)
 
         output_att['pred_logits'] = pred_class_logits
         output_att['pred_bbox'] = pred_proposal_deltas
@@ -1106,6 +1114,8 @@ class SematicRes5ROIHeads(Res5ROIHeads):
             del features
             att_output, att_loss = self.forward_att(
                 feature_pooled, gt_classes)
+            # import pdb; pdb.set_trace()
+
             del feature_pooled
             outputs = FastRCNNOutputs(
                 self.box2box_transform,
@@ -1113,7 +1123,7 @@ class SematicRes5ROIHeads(Res5ROIHeads):
                 att_output['pred_bbox'],
                 proposals,
                 self.smooth_l1_beta
-            )   
+            )
             att_loss = {key: val for key, val in att_loss.items()}
             losses = {}
             loss = outputs.losses()

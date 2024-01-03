@@ -1,16 +1,16 @@
+# EXP_NAME="attention"
 EXP_NAME="test"
-# EXP_NAME="test"
 
 SPLIT_ID=1
 N_GPUS=1
-export CUDA_VISIBLE_DEVICES=7
+export CUDA_VISIBLE_DEVICES=0
 # export CUDA_VISIBLE_DEVICES=0
 
 # SEED = 44029952
 
 IMAGENET_PRETRAIN=ImageNetPretrained/MSRA/R-101.pkl
 IMAGENET_PRETRAIN_TORCH=ImageNetPretrained/torchvision/resnet101-5d3b4d8f.pth
-# IMAGENET_PRETRAIN=checkpoints/voc/CLIP/teacher_base/defrcn_det_r101_base1/model_final.pth
+# IMAGENET_PRETRAIN=checkpoints/voc/attention/teacher_base/defrcn_det_r101_base1/model_final.pth
 SAVE_DIR=checkpoints/voc/${EXP_NAME}
 TEACHER_PATH=checkpoints/voc/${EXP_NAME}/teacher_base/defrcn_det_r101_base${SPLIT_ID}
 
@@ -29,7 +29,7 @@ MODEL.ADDITION.TEACHER_TRAINING True
 MODEL.ADDITION.STUDENT_TRAINING False
 MODEL.ADDITION.DISTIL_MODE False
 MODEL.ADDITION.NAME clip
-SOLVER.IMS_PER_BATCH 1
+SOLVER.IMS_PER_BATCH 4
 SOLVER.MAX_ITER 20000
 "
 
@@ -50,7 +50,7 @@ BASE_WEIGHT=${SAVE_DIR}/teacher_base/defrcn_det_r101_base1/model_reset_surgery.p
 # ------------------------------ Novel Fine-tuning ------------------------------- #
 # --> 2. TFA-like, i.e. run seed0~9 for robust results (G-FSOD, 80 classes)
 
-for shot in 2 3 5 10 
+for shot in 1 2 3 5 10 
 do
     for seed in 0 1 2 3 4 5 6 7 8 9 
     # for shot in  2 3 5 10  # if final, 10 -> 1 2 3 5 10

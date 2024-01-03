@@ -82,19 +82,23 @@ class SingleHeadSiameseAttention(nn.Module):
         super().__init__()
         self.n_head = 1
         self.d_model = d_model
-        self.w_qk1 = nn.Linear(self.d_model, self.n_head *
+        self.w_q = nn.Linear(self.d_model, self.n_head *
                               self.d_model, bias=False)
-        self.w_qk2 = nn.Linear(self.d_model, self.n_head *
+        self.w_k = nn.Linear(self.d_model, self.n_head *
+                              self.d_model, bias=False)
+        self.w_v = nn.Linear(self.d_model, self.n_head *
                               self.d_model, bias=False)
 
         self.attention = ScaledDotProductAttention(
             temperature=np.power(self.d_model, 0.5), dropout=dropout)
         
-        nn.init.normal_(self.w_qk1.weight, mean=0, std=np.sqrt(
+        nn.init.normal_(self.w_q.weight, mean=0, std=np.sqrt(
             2.0 / (self.d_model + self.d_model)))
-        nn.init.normal_(self.w_qk2.weight, mean=0, std=np.sqrt(
+        nn.init.normal_(self.w_k.weight, mean=0, std=np.sqrt(
             2.0 / (self.d_model + self.d_model)))
-
+        nn.init.normal_(self.w_v.weight, mean=0, std=np.sqrt(
+            2.0 / (self.d_model + self.d_model)))
+        
         self.dummy = nn.Parameter(torch.Tensor(1, self.d_model))
         nn.init.normal_(self.dummy)
 
@@ -117,9 +121,9 @@ class SingleHeadSiameseAttention(nn.Module):
         sz_b, len_v, _ = v.size()
 
         residual = q
-        q = self.w_qk1(q).view(sz_b, len_q, self.n_head, self.d_model)
-        k = self.w_qk2(k).view(sz_b, len_k, self.n_head, self.d_model)
-        v = v.view(sz_b, len_v, self.n_head, self.d_model)
+        q = self.w_q(q).view(sz_b, len_q, self.n_head, self.d_model)
+        k = self.w_k(k).view(sz_b, len_k, self.n_head, self.d_model)
+        v = self.w_v(v).view(sz_b, len_v, self.n_head, self.d_model)
         # tsp = tsp.view(sz_b, len_v, self.n_head, self.d_model)
 
         dummy = self.dummy.reshape(1, 1, 1, self.d_model).expand(
@@ -262,7 +266,7 @@ class SematicProposalAttention(nn.Module):
         residual = text_feat.detach().clone().to(self.device)
         
         value_feat = text_feat.detach().clone().to(self.device)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
 
         # visual_feat = self.query_projection(visual_feat)
         # visual_feat =F.relu(visual_feat)
@@ -275,7 +279,7 @@ class SematicProposalAttention(nn.Module):
 
 
         sim2stext, attn = self.attention(
-            q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])[0]
+            q=visual_feat[None, :], k=text_feat[None, :], v=value_feat[None, :])
         
         
         sim2stext = F.relu(sim2stext)
@@ -284,7 +288,7 @@ class SematicProposalAttention(nn.Module):
         #     alpha*self.forward_wo_label(visual_feat)
         # sim2stext = self.value_projection(sim2stext)
         # sim2stext = F.relu(sim2stext)
-        output['sim2stext'] = sim2stext
+        output['sim2stext'] = sim2stext[0]
         output['text_feat'] = residual
 
         return attn,output
