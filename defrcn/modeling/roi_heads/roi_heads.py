@@ -1081,10 +1081,10 @@ class SematicRes5ROIHeads(Res5ROIHeads):
         )
         # Guided_gt_classes = self.cal_CE_att(output_att,gt_classes)
 
-        # pred_class_logits, pred_proposal_deltas = self.box_predictor(
-        #     feature_pooled, output_att['sim2stext'])
         pred_class_logits, pred_proposal_deltas = self.box_predictor(
-            feature_pooled)
+            feature_pooled, output_att['sim2stext'])
+        # pred_class_logits, pred_proposal_deltas = self.box_predictor(
+        #     feature_pooled)
 
         output_att['pred_logits'] = pred_class_logits
         output_att['pred_bbox'] = pred_proposal_deltas
@@ -1170,27 +1170,3 @@ class SematicRes5ROIHeadsCrossOutput(SematicRes5ROIHeads):
         output_att['pred_bbox'] = pred_proposal_deltas
         return output_att, loss_att
     
-@ROI_HEADS_REGISTRY.register()
-class SematicRes5ROIHeads_fixCE(SematicRes5ROIHeads):
-    def __init__(self, cfg, input_shape):
-        super().__init__(cfg, input_shape)
-    def forward_att(self, feature_pooled,gt_classes=0):
-        loss_att, output_att = self.attention(feature_pooled)
-        
-        attentive_feat = self.output_projection(output_att['sim2stext'])
-
-        attentive_score = torch.matmul(output_att['sim2stext'], projected_feat.transpose(0,1))
-        if self.training:
-            loss_entropy=F.cross_entropy(
-                attentive_score, gt_classes , reduction="mean", ignore_index=0
-            )
-            # import torch.nn.utils as utils
-            # utils.clip_grad_norm_(loss_entropy, 1.0)
-            loss_att['CE_attention_loss'] = loss_entropy
-
-        
-        pred_class_logits, pred_proposal_deltas = self.box_predictor(
-            feature_pooled, output_att['sim2stext'])
-        output_att['pred_logits'] = pred_class_logits
-        output_att['pred_bbox'] = pred_proposal_deltas
-        return output_att, loss_att

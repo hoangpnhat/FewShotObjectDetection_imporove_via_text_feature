@@ -1,9 +1,9 @@
 # EXP_NAME="attention"
-EXP_NAME="test"
+EXP_NAME="QKV"
 
 SPLIT_ID=1
-N_GPUS=1
-export CUDA_VISIBLE_DEVICES=0
+N_GPUS=4
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 # export CUDA_VISIBLE_DEVICES=0
 
 # SEED = 44029952
@@ -29,30 +29,27 @@ MODEL.ADDITION.TEACHER_TRAINING True
 MODEL.ADDITION.STUDENT_TRAINING False
 MODEL.ADDITION.DISTIL_MODE False
 MODEL.ADDITION.NAME clip
-SOLVER.IMS_PER_BATCH 4
-SOLVER.MAX_ITER 20000
 "
 
 # # SOLVER.BASE_LR 0.01
 
-python3 main.py --num-gpus ${N_GPUS} --dist-url auto --config-file configs/voc/defrcn_det_r101_base${SPLIT_ID}.yaml     \
-   --opts MODEL.WEIGHTS ${IMAGENET_PRETRAIN}                                 \
-       OUTPUT_DIR ${TEACHER_PATH} TEST.PCB_MODELPATH ${IMAGENET_PRETRAIN_TORCH} ${cfg_MODEL}
+# python3 main.py --num-gpus ${N_GPUS} --dist-url auto --config-file configs/voc/defrcn_det_r101_base${SPLIT_ID}.yaml     \
+#    --opts MODEL.WEIGHTS ${IMAGENET_PRETRAIN}                                 \
+#        OUTPUT_DIR ${TEACHER_PATH} TEST.PCB_MODELPATH ${IMAGENET_PRETRAIN_TORCH} ${cfg_MODEL}
 
-python3 tools/model_surgery.py --dataset voc --method randinit                                \
-   --src-path ${TEACHER_PATH}/model_final.pth                    \
-   --save-dir ${TEACHER_PATH}
+# python3 tools/model_surgery.py --dataset voc --method randinit                                \
+#    --src-path ${TEACHER_PATH}/model_final.pth                    \
+#    --save-dir ${TEACHER_PATH}
 
-exit
 
 BASE_WEIGHT=${SAVE_DIR}/teacher_base/defrcn_det_r101_base1/model_reset_surgery.pth
 # fine-tuning
 # ------------------------------ Novel Fine-tuning ------------------------------- #
 # --> 2. TFA-like, i.e. run seed0~9 for robust results (G-FSOD, 80 classes)
 
-for shot in 1 2 3 5 10 
+for shot in 10 
 do
-    for seed in 0 1 2 3 4 5 6 7 8 9 
+    for seed in 0
     # for shot in  2 3 5 10  # if final, 10 -> 1 2 3 5 10
     do
         cfg_MODEL="
